@@ -1,0 +1,195 @@
+"""API client for poschodoch.sk."""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Awaitable, Callable
+
+import aiohttp
+
+BASE_URL = "https://api.poschodoch.sk/api/"
+TOKEN_LIFETIME = timedelta(hours=2)
+REFRESH_MARGIN = timedelta(hours=1)
+MENU_CACHE_LIFETIME = timedelta(hours=24)
+
+
+class PoschodochAuthError(Exception):
+    """Raised when the refresh token itself is rejected."""
+
+
+class PoschodochApiClient:
+    """Talks to the poschodoch.sk backend."""
+
+    def __init__(
+        self,
+        id_token: str,
+        id_refresh_token: str,
+        token_expires_at: datetime,
+        refresh_after: datetime,
+        session: aiohttp.ClientSession | None = None,
+        on_tokens_updated: Callable[[str, str], Awaitable[None]] | None = None,
+    ) -> None:
+        self._id_token = id_token
+        self._id_refresh_token = id_refresh_token
+        self._token_expires_at = token_expires_at
+        self._refresh_after = refresh_after
+        self._owns_session = session is None
+        self._session = session or aiohttp.ClientSession()
+        self._on_tokens_updated = on_tokens_updated
+        self._menu_map: dict[str, int] | None = None
+        self._menu_map_fetched_at: datetime | None = None
+
+    async def get_menu_map(self) -> dict[str, int]:
+        now = datetime.now(timezone.utc)
+        if (
+            self._menu_map is not None
+            and self._menu_map_fetched_at is not None
+            and now - self._menu_map_fetched_at < MENU_CACHE_LIFETIME
+        ):
+            return self._menu_map
+
+        entries = await self.request("GET", "Dashboard/Menu")
+        self._menu_map = {entry["MenuCode"]: entry["MenuId"] for entry in entries}
+        self._menu_map_fetched_at = now
+        return self._menu_map
+
+    async def get_daily_consumption(self) -> dict[str, list[dict]]:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["DailyConsumption"]
+        body = await self.request(
+            "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "S"}
+        )
+        partitioned: dict[str, list[dict]] = {}
+        for entry in body["Consumption"]:
+            partitioned.setdefault(entry["Code"], []).append(
+                {"date": entry["Date"], "consumption": float(entry["Consumption"])}
+            )
+        return partitioned
+
+    async def get_heating_daily_consumption(self) -> dict[str, list[dict]]:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["DailyConsumption"]
+        body = await self.request(
+            "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "U"}
+        )
+        by_room: dict[str, list[dict]] = {}
+        for entry in body["Consumption"]:
+            by_room.setdefault(entry["Type"], []).append(
+                {"date": entry["Date"], "consumption": float(entry["Consumption"])}
+            )
+        return by_room
+
+    async def get_consumption_status(self, type_code: str) -> dict:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["ConsumptionStatus"]
+        body = await self.request(
+            "GET",
+            "Flat/ConsumptionStatus",
+            params={"menuId": menu_id, "type": type_code},
+        )
+        return {
+            "actual_consumption": float(body["ActualConsumption"]),
+            "diff_consumption": float(body["DiffConsumption"]),
+            "percent_consumption": round(float(body["PercConsumption"]) * 100, 1),
+            "unit": body["Unit"],
+        }
+
+    async def get_meter_readings(self) -> list[dict]:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["MeterReadings"]
+        body = await self.request(
+            "GET",
+            "Flat/MeterReadings",
+            params={"menuId": menu_id, "disassembled": 1},
+        )
+        return [
+            {
+                "meter_id": entry["MeterId"],
+                "meter_number": entry["MeterNumber"],
+                "meter_type": entry["MeterType"],
+                "room": entry["ClimbingIron"],
+            }
+            for entry in body["MeterReadings"]
+        ]
+
+    async def get_account(self) -> dict:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["account"]
+        body = await self.request(
+            "GET", "Flat/Account", params={"menuId": menu_id}
+        )
+        last_payment = next(
+            (e for e in body["Account"] if e["TypeOfMovement"] == "P"), None
+        )
+        return {
+            "due_balance": float(body["DueBalance"]),
+            "due_date": body["DueDate"],
+            "last_payment_amount": float(last_payment["Amount"]) if last_payment else None,
+            "last_payment_date": last_payment["CreditDate"] if last_payment else None,
+        }
+
+    async def get_repair_fund(self) -> dict:
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["RepairFund"]
+        year = datetime.now(timezone.utc).year
+        body = await self.request(
+            "GET", "Object/RepairFund", params={"menuId": menu_id, "year": year}
+        )
+        entries = body["RepairFund"]
+        balance = sum(float(e["Amount"]) for e in entries)
+        recent_entries = [
+            {
+                "amount": float(e["Amount"]),
+                "date": e["Date"],
+                "description": e["Description"],
+            }
+            for e in entries[:5]
+        ]
+        return {"balance": balance, "year": year, "recent_entries": recent_entries}
+
+    async def close(self) -> None:
+        if self._owns_session:
+            await self._session.close()
+
+    async def _raw_request(self, method: str, path: str, **kwargs):
+        headers = kwargs.pop("headers", {})
+        headers["X-Auth-Token"] = self._id_token
+        async with self._session.request(
+            method, f"{BASE_URL}{path}", headers=headers, **kwargs
+        ) as resp:
+            return resp.status, await resp.json()
+
+    async def request(self, method: str, path: str, **kwargs):
+        if datetime.now(timezone.utc) >= self._refresh_after:
+            await self._refresh()
+        status, body = await self._raw_request(method, path, **kwargs)
+        if status == 401:
+            await self._refresh()
+            status, body = await self._raw_request(method, path, **kwargs)
+            if status == 401:
+                raise PoschodochAuthError("Refresh token rejected")
+        return body
+
+    async def _refresh(self) -> None:
+        async with self._session.post(
+            f"{BASE_URL}Auth/Refresh",
+            data=json.dumps(self._id_refresh_token),
+            headers={"Content-Type": "application/json"},
+        ) as resp:
+            if resp.status != 200:
+                raise PoschodochAuthError("Refresh token rejected")
+            body = await resp.json()
+
+        self._id_token = body.get("IdToken") or body.get("idToken") or body.get("id_token")
+        self._id_refresh_token = (
+            body.get("IdRefreshToken")
+            or body.get("idRefreshToken")
+            or body.get("id_refresh_token")
+            or self._id_refresh_token
+        )
+        now = datetime.now(timezone.utc)
+        self._token_expires_at = now + TOKEN_LIFETIME
+        self._refresh_after = now + (TOKEN_LIFETIME - REFRESH_MARGIN)
+
+        if self._on_tokens_updated is not None:
+            await self._on_tokens_updated(self._id_token, self._id_refresh_token)

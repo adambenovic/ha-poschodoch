@@ -1,0 +1,77 @@
+from unittest.mock import AsyncMock
+
+import pytest
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
+from custom_components.poschodoch.api import PoschodochAuthError
+from custom_components.poschodoch.coordinator import PoschodochDataUpdateCoordinator
+
+
+def make_fake_client():
+    client = AsyncMock()
+    client.get_daily_consumption.return_value = {
+        "S": [{"date": "2026-09-24", "consumption": 290.0}],
+        "T": [{"date": "2026-09-24", "consumption": 54.0}],
+    }
+    client.get_consumption_status.side_effect = lambda type_code: {
+        "S": {"actual_consumption": 38.28, "diff_consumption": 8.65, "percent_consumption": 29.0, "unit": "m3"},
+        "T": {"actual_consumption": 10.0, "diff_consumption": 1.0, "percent_consumption": 5.0, "unit": "m3"},
+        "U": {"actual_consumption": 644.0, "diff_consumption": -161.0, "percent_consumption": -20.0, "unit": "d./kWh"},
+    }[type_code]
+    client.get_heating_daily_consumption.return_value = {
+        "Kuchyňa": [{"date": "2026-09-24", "consumption": 1.5}],
+    }
+    client.get_meter_readings.return_value = [
+        {"meter_id": 1, "meter_number": "abc", "meter_type": "UK", "room": "Kuchyňa"},
+    ]
+    client.get_account.return_value = {
+        "due_balance": 195.60,
+        "due_date": "2026-09-30",
+        "last_payment_amount": 184.24,
+        "last_payment_date": "2026-09-02",
+    }
+    client.get_repair_fund.return_value = {
+        "balance": 109.28,
+        "year": 2026,
+        "recent_entries": [],
+    }
+    return client
+
+
+@pytest.mark.asyncio
+async def test_coordinator_assembles_all_domains(hass):
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data["daily_consumption"]["S"][0]["consumption"] == 290.0
+    assert coordinator.data["heating_daily_consumption"]["Kuchyňa"][0]["consumption"] == 1.5
+    assert coordinator.data["consumption_status"]["S"]["percent_consumption"] == 29.0
+    assert coordinator.data["consumption_status"]["U"]["percent_consumption"] == -20.0
+    assert coordinator.data["meter_readings"][0]["room"] == "Kuchyňa"
+    assert coordinator.data["account"]["due_balance"] == 195.60
+    assert coordinator.data["repair_fund"]["balance"] == 109.28
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_auth_failed_on_rejected_refresh_token(hass):
+    client = make_fake_client()
+    client.get_daily_consumption.side_effect = PoschodochAuthError("nope")
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    assert isinstance(coordinator.last_exception, ConfigEntryAuthFailed)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_update_failed_on_other_errors(hass):
+    client = make_fake_client()
+    client.get_daily_consumption.side_effect = RuntimeError("network blip")
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    assert isinstance(coordinator.last_exception, UpdateFailed)
