@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://api.poschodoch.sk/api/"
 TOKEN_LIFETIME = timedelta(hours=2)
@@ -157,7 +160,7 @@ class PoschodochApiClient:
         async with self._session.request(
             method, f"{BASE_URL}{path}", headers=headers, **kwargs
         ) as resp:
-            return resp.status, await resp.json()
+            return resp.status, await resp.json(content_type=None)
 
     async def request(self, method: str, path: str, **kwargs):
         if datetime.now(timezone.utc) >= self._refresh_after:
@@ -183,10 +186,15 @@ class PoschodochApiClient:
         ) as resp:
             if resp.status != 200:
                 error_body = await resp.text()
-                raise PoschodochAuthError(
-                    f"Refresh token rejected (status {resp.status}): {error_body}"
+                _LOGGER.debug(
+                    "Auth/refresh rejected with status %s: %s",
+                    resp.status,
+                    error_body,
                 )
-            body = await resp.json()
+                raise PoschodochAuthError(
+                    f"Refresh token rejected (status {resp.status})"
+                )
+            body = await resp.json(content_type=None)
 
         self._id_token = body["auth_token"]
         self._id_refresh_token = body["refresh_token"]

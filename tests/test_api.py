@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -105,7 +106,12 @@ async def test_rejected_refresh_token_raises_auth_error(client_factory):
 
 
 @pytest.mark.asyncio
-async def test_rejected_refresh_error_message_includes_server_response(client_factory):
+async def test_rejected_refresh_error_message_does_not_leak_raw_server_response(
+    client_factory,
+):
+    """The exception message must stay generic (it ends up in HA's logs, which
+    users routinely share publicly for support) — the raw server body is not
+    guaranteed safe to expose by default."""
     client = client_factory()
     with aioresponses() as mocked:
         mocked.post(
@@ -117,7 +123,52 @@ async def test_rejected_refresh_error_message_includes_server_response(client_fa
         with pytest.raises(PoschodochAuthError) as exc_info:
             await client._refresh()
 
-    assert "Invalid refresh token(1)" in str(exc_info.value)
+    assert "Invalid refresh token(1)" not in str(exc_info.value)
+    assert "400" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_rejected_refresh_logs_raw_server_response_at_debug_level(
+    client_factory, caplog
+):
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token(1)"},
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="custom_components.poschodoch.api"):
+            with pytest.raises(PoschodochAuthError):
+                await client._refresh()
+
+    assert "Invalid refresh token(1)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_refresh_parses_success_response_despite_text_plain_content_type(
+    client_factory,
+):
+    """The real Auth/refresh endpoint returns Content-Type: text/plain on its
+    JSON body (a real backend inconsistency) — must not choke on that."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=200,
+            content_type="text/plain; charset=utf-8,nosniff",
+            payload={
+                "auth_token": "fresh-token",
+                "refresh_token": "fresh-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+
+        await client._refresh()
+
+    assert client._id_token == "fresh-token"
+    assert client._id_refresh_token == "fresh-refresh-token"
 
 
 @pytest.mark.asyncio
