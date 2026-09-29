@@ -1,9 +1,9 @@
 {
   "domain": "poschodoch",
   "name": "poschodoch.sk",
-  "codeowners": ["@YOUR_GITHUB_USERNAME"],
+  "codeowners": ["@adambenovic"],
   "config_flow": true,
-  "documentation": "https://github.com/YOUR_GITHUB_USERNAME/ha-poschodoch",
+  "documentation": "https://github.com/adambenovic/ha-poschodoch",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "requirements": [],
