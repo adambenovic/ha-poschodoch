@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -56,8 +57,12 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
             status=401,
         )
         mocked.post(
-            "https://api.poschodoch.sk/api/Auth/Refresh",
-            payload={"IdToken": "fresh-token", "IdRefreshToken": "fresh-refresh-token"},
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "fresh-token",
+                "refresh_token": "fresh-refresh-token",
+                "expires_in": 7200,
+            },
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Dashboard/UnitInfo/",
@@ -68,9 +73,13 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
 
     assert result == {"UnitId": 1}
 
-    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/Refresh"))
+    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/refresh"))
     refresh_call = mocked.requests[refresh_key][0]
-    assert refresh_call.kwargs["data"] == '"my-refresh-token"'
+    assert refresh_call.kwargs["headers"]["Authorization"] == "Bearer stale-token"
+    assert json.loads(refresh_call.kwargs["data"]) == {
+        "AuthToken": "stale-token",
+        "RefreshToken": "my-refresh-token",
+    }
 
     retry_key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
     second_call = mocked.requests[retry_key][1]
@@ -86,7 +95,7 @@ async def test_rejected_refresh_token_raises_auth_error(client_factory):
             status=401,
         )
         mocked.post(
-            "https://api.poschodoch.sk/api/Auth/Refresh",
+            "https://api.poschodoch.sk/api/Auth/refresh",
             status=401,
             payload={"error": "invalid refresh token"},
         )
@@ -106,8 +115,12 @@ async def test_proactively_refreshes_before_expiry_deadline(freezer, client_fact
     )
     with aioresponses() as mocked:
         mocked.post(
-            "https://api.poschodoch.sk/api/Auth/Refresh",
-            payload={"IdToken": "fresh-token", "IdRefreshToken": "fresh-refresh-token"},
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "fresh-token",
+                "refresh_token": "fresh-refresh-token",
+                "expires_in": 7200,
+            },
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Dashboard/UnitInfo/",
@@ -116,7 +129,7 @@ async def test_proactively_refreshes_before_expiry_deadline(freezer, client_fact
 
         await client.request("GET", "Dashboard/UnitInfo/")
 
-    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/Refresh"))
+    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/refresh"))
     assert refresh_key in mocked.requests
 
     call_key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
@@ -135,8 +148,12 @@ async def test_does_not_refresh_again_immediately_after_refreshing(freezer, clie
     )
     with aioresponses() as mocked:
         mocked.post(
-            "https://api.poschodoch.sk/api/Auth/Refresh",
-            payload={"IdToken": "fresh-token", "IdRefreshToken": "fresh-refresh-token"},
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "fresh-token",
+                "refresh_token": "fresh-refresh-token",
+                "expires_in": 7200,
+            },
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Dashboard/UnitInfo/",
@@ -151,7 +168,7 @@ async def test_does_not_refresh_again_immediately_after_refreshing(freezer, clie
         )
         await client.request("GET", "Dashboard/UnitInfo/")
 
-    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/Refresh"))
+    refresh_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/refresh"))
     assert len(mocked.requests[refresh_key]) == 1
 
 
@@ -396,8 +413,12 @@ async def test_refresh_calls_on_tokens_updated_callback_with_new_tokens(client_f
             status=401,
         )
         mocked.post(
-            "https://api.poschodoch.sk/api/Auth/Refresh",
-            payload={"IdToken": "new-token", "IdRefreshToken": "rotated-refresh-token"},
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "new-token",
+                "refresh_token": "rotated-refresh-token",
+                "expires_in": 7200,
+            },
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Dashboard/UnitInfo/",

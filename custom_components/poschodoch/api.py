@@ -172,24 +172,25 @@ class PoschodochApiClient:
 
     async def _refresh(self) -> None:
         async with self._session.post(
-            f"{BASE_URL}Auth/Refresh",
-            data=json.dumps(self._id_refresh_token),
-            headers={"Content-Type": "application/json"},
+            f"{BASE_URL}Auth/refresh",
+            data=json.dumps(
+                {"AuthToken": self._id_token, "RefreshToken": self._id_refresh_token}
+            ),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._id_token}",
+            },
         ) as resp:
             if resp.status != 200:
                 raise PoschodochAuthError("Refresh token rejected")
             body = await resp.json()
 
-        self._id_token = body.get("IdToken") or body.get("idToken") or body.get("id_token")
-        self._id_refresh_token = (
-            body.get("IdRefreshToken")
-            or body.get("idRefreshToken")
-            or body.get("id_refresh_token")
-            or self._id_refresh_token
-        )
+        self._id_token = body["auth_token"]
+        self._id_refresh_token = body["refresh_token"]
+        expires_in = timedelta(seconds=body.get("expires_in", TOKEN_LIFETIME.total_seconds()))
         now = datetime.now(timezone.utc)
-        self._token_expires_at = now + TOKEN_LIFETIME
-        self._refresh_after = now + (TOKEN_LIFETIME - REFRESH_MARGIN)
+        self._token_expires_at = now + expires_in
+        self._refresh_after = now + max(expires_in - REFRESH_MARGIN, timedelta(0))
 
         if self._on_tokens_updated is not None:
             await self._on_tokens_updated(self._id_token, self._id_refresh_token)

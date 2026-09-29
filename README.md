@@ -21,20 +21,32 @@ fund balance.
 Copy `custom_components/poschodoch` into your Home Assistant
 `custom_components` folder and restart.
 
-## Setup: getting your refresh token
+## Setup: getting your tokens
 
 poschodoch.sk signs you in via Google in the browser, and there's no
 practical way for Home Assistant to replay that flow itself. Instead,
-a one-time manual step hands the integration a long-lived credential:
+a one-time manual step hands the integration two paired credentials:
 
 1. Open <https://www.poschodoch.sk> in a desktop browser and sign in.
 2. Open DevTools (F12) → **Application** tab → **Local Storage** →
    `https://www.poschodoch.sk`.
-3. Find the key `id_refresh_token` and copy its value.
-4. In Home Assistant, add the integration and paste that value in.
+3. Copy the values of **both** `id_token` and `id_refresh_token`.
+4. In Home Assistant, add the integration and paste both values in —
+   they're required together, since renewing a session means
+   presenting the current access token (`id_token`) alongside its
+   refresh token (`id_refresh_token`).
 
-If the integration ever shows as needing re-authentication (the
-refresh token was rejected/revoked), repeat these same steps.
+**Important:** copy both values *immediately before* completing setup
+and don't reuse old/noted-down values. `id_refresh_token` is a
+single-use, rotating credential — each time it's exchanged for a new
+session, a new refresh token is issued and the old one stops working.
+It's fine if `id_token` looks "expired" by the time you paste it (that
+token being expired is exactly why a refresh happens); what matters is
+that the *pair* is the most recent one your browser has, not that
+either value is individually still valid.
+
+If the integration ever shows as needing re-authentication (the token
+pair was rejected/revoked), repeat these same steps with a fresh pair.
 
 ## Sensors
 
@@ -50,19 +62,6 @@ refresh token was rejected/revoked), repeat these same steps.
 | Repair fund balance | Current year's repair fund balance (EUR) |
 
 Data refreshes hourly.
-
-## Known limitation
-
-The exact response shape of poschodoch.sk's token-refresh endpoint
-(`Auth/Refresh`) was reverse-engineered through safe, credential-free
-probing (its request format is confirmed) but its *success* response
-shape was never observed against a real account, since that would
-have required testing with a genuine, live refresh token against
-someone's production session. The parsing for that one response is
-written defensively and isolated to a single method
-(`PoschodochApiClient._refresh`) in case it needs a small adjustment
-the first time it runs against a real token — if setup fails
-unexpectedly, that's the first place to look.
 
 ## Development
 

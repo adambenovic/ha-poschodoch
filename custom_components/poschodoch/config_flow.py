@@ -16,7 +16,9 @@ from .const import (
     DOMAIN,
 )
 
-STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required("refresh_token"): str})
+STEP_USER_DATA_SCHEMA = vol.Schema(
+    {vol.Required("id_token"): str, vol.Required("refresh_token"): str}
+)
 
 
 class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -27,10 +29,10 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._reauth_entry: config_entries.ConfigEntry | None = None
 
-    async def _validate_and_build_entry_data(self, refresh_token: str) -> dict:
+    async def _validate_and_build_entry_data(self, id_token: str, refresh_token: str) -> dict:
         now = datetime.now(timezone.utc)
         client = PoschodochApiClient(
-            id_token="",
+            id_token=id_token,
             id_refresh_token=refresh_token,
             token_expires_at=now,
             refresh_after=now,
@@ -49,7 +51,7 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 data = await self._validate_and_build_entry_data(
-                    user_input["refresh_token"]
+                    user_input["id_token"], user_input["refresh_token"]
                 )
             except PoschodochAuthError:
                 errors["base"] = "invalid_auth"
@@ -73,7 +75,7 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 data = await self._validate_and_build_entry_data(
-                    user_input["refresh_token"]
+                    user_input["id_token"], user_input["refresh_token"]
                 )
             except PoschodochAuthError:
                 errors["base"] = "invalid_auth"
