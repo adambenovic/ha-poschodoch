@@ -1,6 +1,7 @@
 """Config flow for poschodoch.sk."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import voluptuous as vol
@@ -15,6 +16,8 @@ from .const import (
     CONF_TOKEN_EXPIRES_AT,
     DOMAIN,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {vol.Required("id_token"): str, vol.Required("refresh_token"): str}
@@ -54,8 +57,10 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input["id_token"], user_input["refresh_token"]
                 )
             except PoschodochAuthError:
+                _LOGGER.exception("poschodoch.sk rejected the provided tokens")
                 errors["base"] = "invalid_auth"
             except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected error validating poschodoch.sk tokens")
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_create_entry(title="poschodoch.sk", data=data)
@@ -78,8 +83,10 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input["id_token"], user_input["refresh_token"]
                 )
             except PoschodochAuthError:
+                _LOGGER.exception("poschodoch.sk rejected the provided tokens")
                 errors["base"] = "invalid_auth"
             except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected error validating poschodoch.sk tokens")
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(

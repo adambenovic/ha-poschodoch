@@ -105,6 +105,22 @@ async def test_rejected_refresh_token_raises_auth_error(client_factory):
 
 
 @pytest.mark.asyncio
+async def test_rejected_refresh_error_message_includes_server_response(client_factory):
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token(1)"},
+        )
+
+        with pytest.raises(PoschodochAuthError) as exc_info:
+            await client._refresh()
+
+    assert "Invalid refresh token(1)" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_proactively_refreshes_before_expiry_deadline(freezer, client_factory):
     now = datetime.now(timezone.utc)
     client = client_factory(

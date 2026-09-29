@@ -182,7 +182,10 @@ class PoschodochApiClient:
             },
         ) as resp:
             if resp.status != 200:
-                raise PoschodochAuthError("Refresh token rejected")
+                error_body = await resp.text()
+                raise PoschodochAuthError(
+                    f"Refresh token rejected (status {resp.status}): {error_body}"
+                )
             body = await resp.json()
 
         self._id_token = body["auth_token"]
