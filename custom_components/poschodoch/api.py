@@ -14,7 +14,7 @@ BASE_URL = "https://api.poschodoch.sk/api/"
 TOKEN_LIFETIME = timedelta(hours=2)
 REFRESH_MARGIN = timedelta(hours=1)
 MENU_CACHE_LIFETIME = timedelta(hours=24)
-REPAIR_FUND_LOOKBACK_YEARS_CAP = 25
+REPAIR_FUND_LOOKBACK_YEARS_CAP = 60
 
 
 class PoschodochAuthError(Exception):
