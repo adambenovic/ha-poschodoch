@@ -101,7 +101,7 @@ field names and units as returned by the API:
 | `GET Flat/ConsumptionStatus?menuId=<id>&type=S\|T\|U` | "How am I doing vs last year" | `ActualConsumption`, `DiffConsumption`, `PercConsumption`, `Unit` |
 | `GET Flat/MeterReadings?menuId=<id>&disassembled=1` | Physical meter list | `MeterId`, `MeterNumber`, `MeterType` (`SV`/`TV`/`UK`), `ClimbingIron` (room name for `UK`) |
 | `GET Flat/Account?menuId=<id>` | Payment/balance ledger | `Account[]` (`Amount`, `Balance`, `Period`, `TypeOfMovement`, `DueDate`) |
-| `GET Object/RepairFund?menuId=<id>&year=<yyyy>` | Building repair-fund ledger | `RepairFund[]` (`Amount`, `TvorbaCerpanie`, `Date`, `Description`) |
+| `GET Object/RepairFund?menuId=<id>&year=<yyyy>` | Building repair-fund ledger | `RepairFund[]` (`Amount`, `TvorbaCerpanie`, `Date`, `Description`) for the requested year's transactions, plus top-level `FinalBalance` (authoritative running balance as of now — **do not** re-derive by summing `RepairFund[]`, see below), `OpeningBalance`, `YearFrom`/`YearTo` (the fund's full history range), and monthly `Balance01`..`Balance12` |
 
 `type` query param groups by *domain* (water vs. heating vs. other),
 not by cold/hot specifically — see the `Code`-based partitioning note
@@ -200,9 +200,13 @@ tests/
 | Hot water — last daily | latest day's `Consumption` (L) | `date` |
 | Heating — last daily (per room) | latest day's `Consumption`, one entity per room found in `MeterReadings` (`ClimbingIron`) | `date`, `meter_number` |
 | Account balance | `DueBalance` (EUR) | `due_date`, `last_payment_amount`, `last_payment_date` |
-| Repair fund balance | sum of `Amount` across every calendar year's ledger since the fund started, walked backward year-by-year (`Object/RepairFund?year=<yyyy>`) until a year's response doesn't actually belong to that year; past years are cached forever, only the current year is re-fetched each poll — a single year's sum was found to be off by thousands of euros vs. the real balance | `recent_entries` (last 5 across all years, sorted by date desc), `year`, `since_year` |
+| Repair fund balance | the response's own top-level `FinalBalance` field (a single call for the current year) | `recent_entries` (current year's, last 5, sorted by date desc), `year`, `since_year` (from `YearFrom`) |
 
-**Backend quirk (confirmed live):** `Object/RepairFund?year=<yyyy>` does **not** return an empty list once you walk far enough back past the fund's actual start — it silently ignores the `year` param and echoes back the current year's ledger instead. The walk-backward loop can't use "empty response" as its only stop condition; it must check whether the returned entries' own `Date` fields actually fall within the requested year, and stop (discarding that response) the first time they don't — otherwise the same entries get counted many times over.
+**Two false starts, corrected through live testing:**
+1. First attempt summed `Amount` across only the current calendar year's ledger — wrong by tens of thousands of euros, since the fund accumulates over many years, not one.
+2. Second attempt tried to reconstruct the lifetime balance by walking backward year-by-year and summing every year's `Amount`. This actually made things *worse*: the ledger mixes in loan disbursement/repayment pairs (`uver`/`Splatka uveru`) that mostly, but not exactly, net to zero, so re-deriving a balance from raw transactions doesn't reproduce the real number even with fully correct, non-duplicated year data. It also ran into a genuine backend quirk — `Object/RepairFund?year=<yyyy>` does **not** return an empty list once you walk far enough back past the fund's actual start; it silently ignores the `year` param and echoes back the current year's ledger instead, which without detection caused the same entries to be counted many times over.
+
+The actual fix: the response already carries the answer directly. `FinalBalance` is the server's own authoritative running balance (matches the real website exactly), and `YearFrom`/`YearTo` on the very same response state the fund's full history range with no probing needed. No client-side summation across transactions is required or correct for this value — same pattern as `Flat/Account`'s `DueBalance`.
 
 Per-room heating sensors are created dynamically from whatever rooms
 `MeterReadings` returns for meter type `UK` — no hardcoded room names,

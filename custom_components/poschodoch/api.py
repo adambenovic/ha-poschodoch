@@ -14,16 +14,10 @@ BASE_URL = "https://api.poschodoch.sk/api/"
 TOKEN_LIFETIME = timedelta(hours=2)
 REFRESH_MARGIN = timedelta(hours=1)
 MENU_CACHE_LIFETIME = timedelta(hours=24)
-REPAIR_FUND_LOOKBACK_YEARS_CAP = 60
 
 
 class PoschodochAuthError(Exception):
     """Raised when the refresh token itself is rejected."""
-
-
-def _entries_belong_to_year(entries: list[dict], year: int) -> bool:
-    year_prefix = str(year)
-    return any(entry["date"].startswith(year_prefix) for entry in entries)
 
 
 def _to_float(value: str | float | None) -> float | None:
@@ -55,8 +49,6 @@ class PoschodochApiClient:
         self._menu_map: dict[str, int] | None = None
         self._menu_map_fetched_at: datetime | None = None
         self._portal_id: int | None = None
-        self._repair_fund_history: dict[int, list[dict]] | None = None
-        self._diag_raw: dict[int, list] = {}
 
     async def get_menu_map(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -68,10 +60,6 @@ class PoschodochApiClient:
             return self._menu_map
 
         entries = await self.request("GET", "Dashboard/Menu")
-        _LOGGER.warning(
-            "DIAGNOSTIC Dashboard/Menu RAW: %s",
-            json.dumps(entries, ensure_ascii=False),
-        )
         self._menu_map = {entry["MenuCode"]: entry["MenuId"] for entry in entries}
         self._menu_map_fetched_at = now
         return self._menu_map
@@ -81,13 +69,6 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         body = await self.request(
             "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "S"}
-        )
-        dates = sorted(e["Date"] for e in body["Consumption"])
-        _LOGGER.warning(
-            "DIAGNOSTIC DailyConsumption type=S: %d entries, range %s..%s",
-            len(dates),
-            dates[0] if dates else None,
-            dates[-1] if dates else None,
         )
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
@@ -101,13 +82,6 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         body = await self.request(
             "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "U"}
-        )
-        dates = sorted(e["Date"] for e in body["Consumption"])
-        _LOGGER.warning(
-            "DIAGNOSTIC DailyConsumption type=U: %d entries, range %s..%s",
-            len(dates),
-            dates[0] if dates else None,
-            dates[-1] if dates else None,
         )
         by_room: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
@@ -171,52 +145,21 @@ class PoschodochApiClient:
         }
 
     async def get_repair_fund(self) -> dict:
-        """The repair fund balance accumulates since the fund started, not
-        just within the current calendar year, but the ledger API only
-        returns one year at a time. Past years are closed and cached
-        forever once fetched; the current year is still in progress and is
-        always re-fetched. Edge case: if the calendar year rolls over while
-        this client stays alive without a restart, the year that used to be
-        "current" won't get folded into the cache until the next restart —
-        acceptable since HA restarts far more often than once a year."""
+        """The response for a single year already carries a
+        server-computed, authoritative FinalBalance (plus YearFrom/YearTo
+        for how far the fund's history goes) — manually summing the
+        RepairFund[] ledger ourselves was wrong by tens of thousands of
+        euros, since that ledger mixes loan disbursements/repayments that
+        mostly (but not exactly) net out and isn't the same thing as the
+        running balance."""
         menu_map = await self.get_menu_map()
         menu_id = menu_map["RepairFund"]
         current_year = datetime.now(timezone.utc).year
-
-        if self._repair_fund_history is None:
-            self._repair_fund_history = await self._fetch_repair_fund_history(
-                menu_id, current_year
-            )
-
-        current_year_entries = await self._fetch_repair_fund_year(menu_id, current_year)
-        all_entries = [
-            entry
-            for year_entries in self._repair_fund_history.values()
-            for entry in year_entries
-        ] + current_year_entries
-
-        balance = sum(entry["amount"] or 0 for entry in all_entries)
-        recent_entries = sorted(all_entries, key=lambda e: e["date"], reverse=True)[:5]
-        since_year = min(self._repair_fund_history, default=current_year)
-
-        _LOGGER.warning(
-            "DIAGNOSTIC RepairFund ALL YEARS: %s",
-            json.dumps(self._diag_raw, ensure_ascii=False),
-        )
-
-        return {
-            "balance": balance,
-            "year": current_year,
-            "since_year": since_year,
-            "recent_entries": recent_entries,
-        }
-
-    async def _fetch_repair_fund_year(self, menu_id: int, year: int) -> list[dict]:
         body = await self.request(
-            "GET", "Object/RepairFund", params={"menuId": menu_id, "year": year}
+            "GET", "Object/RepairFund", params={"menuId": menu_id, "year": current_year}
         )
-        self._diag_raw[year] = body["RepairFund"]
-        return [
+
+        entries = [
             {
                 "amount": _to_float(e["Amount"]),
                 "date": e["Date"],
@@ -224,30 +167,14 @@ class PoschodochApiClient:
             }
             for e in body["RepairFund"]
         ]
+        recent_entries = sorted(entries, key=lambda e: e["date"], reverse=True)[:5]
 
-    async def _fetch_repair_fund_history(
-        self, menu_id: int, current_year: int
-    ) -> dict[int, list[dict]]:
-        history: dict[int, list[dict]] = {}
-        for offset in range(1, REPAIR_FUND_LOOKBACK_YEARS_CAP + 1):
-            year = current_year - offset
-            entries = await self._fetch_repair_fund_year(menu_id, year)
-            if not entries or not _entries_belong_to_year(entries, year):
-                # Confirmed live: for years far enough back, the real API
-                # stops honoring `year` and just echoes the current year's
-                # ledger instead of returning empty. Treat that the same as
-                # "no more history" — stop here and discard this response,
-                # since counting it would double-count the same entries.
-                break
-            history[year] = entries
-        else:
-            _LOGGER.warning(
-                "Repair fund history lookup hit the %s-year safety cap "
-                "without finding the start of the fund's history; "
-                "balance may be understated",
-                REPAIR_FUND_LOOKBACK_YEARS_CAP,
-            )
-        return history
+        return {
+            "balance": _to_float(body["FinalBalance"]),
+            "year": current_year,
+            "since_year": body.get("YearFrom", current_year),
+            "recent_entries": recent_entries,
+        }
 
     async def close(self) -> None:
         if self._owns_session:

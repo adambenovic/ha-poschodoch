@@ -59,11 +59,7 @@ async def test_setup_entry_creates_working_coordinator(hass):
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
-            payload={"RepairFund": []},
-        )
-        mocked.get(
-            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2025",
-            payload={"RepairFund": []},
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
         )
 
         with patch(
@@ -148,11 +144,7 @@ async def test_full_setup_creates_real_sensor_entities(hass):
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
-            payload={"RepairFund": []},
-        )
-        mocked.get(
-            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2025",
-            payload={"RepairFund": []},
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
         )
 
         result = await hass.config_entries.async_setup(entry.entry_id)
