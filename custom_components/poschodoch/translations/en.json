@@ -6,7 +6,7 @@
         "description": "Open https://www.poschodoch.sk, sign in, then in DevTools go to Application → Local Storage → www.poschodoch.sk and copy the values of both the `id_token` and `id_refresh_token` keys, pasted below. Both are needed together — the refresh call requires the current access token paired with its refresh token.",
         "data": {
           "id_token": "Auth token (id_token)",
-          "refresh_token": "Refresh token (id_refresh_token)"
+          "id_refresh_token": "Refresh token (id_refresh_token)"
         }
       },
       "reauth_confirm": {
@@ -14,7 +14,7 @@
         "description": "Your poschodoch.sk session has expired or was revoked. Repeat the same steps to get a fresh pair of tokens from your browser's local storage.",
         "data": {
           "id_token": "Auth token (id_token)",
-          "refresh_token": "Refresh token (id_refresh_token)"
+          "id_refresh_token": "Refresh token (id_refresh_token)"
         }
       }
     },

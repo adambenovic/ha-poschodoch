@@ -20,7 +20,7 @@ async def test_unexpected_exception_is_logged(hass, caplog):
         with caplog.at_level(logging.ERROR):
             await hass.config_entries.flow.async_configure(
                 result["flow_id"],
-                {"id_token": "some-id-token", "refresh_token": "some-refresh-token"},
+                {"id_token": "some-id-token", "id_refresh_token": "some-refresh-token"},
             )
 
     assert "boom" in caplog.text

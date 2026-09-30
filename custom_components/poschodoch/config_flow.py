@@ -9,18 +9,12 @@ from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import PoschodochApiClient, PoschodochAuthError
-from .const import (
-    CONF_ID_REFRESH_TOKEN,
-    CONF_ID_TOKEN,
-    CONF_REFRESH_AFTER,
-    CONF_TOKEN_EXPIRES_AT,
-    DOMAIN,
-)
+from .const import CONF_ID_REFRESH_TOKEN, CONF_ID_TOKEN, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
-    {vol.Required("id_token"): str, vol.Required("refresh_token"): str}
+    {vol.Required(CONF_ID_TOKEN): str, vol.Required(CONF_ID_REFRESH_TOKEN): str}
 )
 
 
@@ -47,19 +41,14 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # token_expires_at/refresh_after for all subsequent calls.
         await client.activate()
         await client.get_menu_map()
-        return {
-            CONF_ID_TOKEN: client._id_token,
-            CONF_ID_REFRESH_TOKEN: client._id_refresh_token,
-            CONF_TOKEN_EXPIRES_AT: client._token_expires_at.isoformat(),
-            CONF_REFRESH_AFTER: client._refresh_after.isoformat(),
-        }
+        return client.token_state
 
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
             try:
                 data = await self._validate_and_build_entry_data(
-                    user_input["id_token"], user_input["refresh_token"]
+                    user_input[CONF_ID_TOKEN], user_input[CONF_ID_REFRESH_TOKEN]
                 )
             except PoschodochAuthError:
                 _LOGGER.exception("poschodoch.sk rejected the provided tokens")
@@ -85,7 +74,7 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 data = await self._validate_and_build_entry_data(
-                    user_input["id_token"], user_input["refresh_token"]
+                    user_input[CONF_ID_TOKEN], user_input[CONF_ID_REFRESH_TOKEN]
                 )
             except PoschodochAuthError:
                 _LOGGER.exception("poschodoch.sk rejected the provided tokens")

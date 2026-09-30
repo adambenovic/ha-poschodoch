@@ -26,7 +26,7 @@ async def test_user_flow_creates_entry_on_valid_refresh_token(hass):
     ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"id_token": "my-id-token", "refresh_token": "my-refresh-token"},
+            {"id_token": "my-id-token", "id_refresh_token": "my-refresh-token"},
         )
 
     assert result2["type"] == FlowResultType.CREATE_ENTRY
@@ -46,7 +46,7 @@ async def test_user_flow_shows_error_on_invalid_refresh_token(hass):
     ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"id_token": "bad-id-token", "refresh_token": "bad-token"},
+            {"id_token": "bad-id-token", "id_refresh_token": "bad-token"},
         )
 
     assert result2["type"] == FlowResultType.FORM
@@ -82,7 +82,7 @@ async def test_reauth_updates_existing_entry_with_new_refresh_token(hass):
     ):
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {"id_token": "new-id-token", "refresh_token": "new-refresh-token"},
+            {"id_token": "new-id-token", "id_refresh_token": "new-refresh-token"},
         )
         await hass.async_block_till_done()
 
