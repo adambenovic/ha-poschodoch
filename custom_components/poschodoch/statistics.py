@@ -134,6 +134,18 @@ async def _sweep_backward(
             by_series = {}
         calls_made += 1
         hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
+        if hit and year < 2015:
+            sample_dates = sorted(
+                {e["date"] for entries in by_series.values() for e in entries}
+            )
+            _LOGGER.warning(
+                "DIAGNOSTIC [%s] %04d-%02d hit, %d total entries, unique dates: %s",
+                label,
+                year,
+                month,
+                sum(len(v) for v in by_series.values()),
+                sample_dates[:5] + ["..."] + sample_dates[-5:] if len(sample_dates) > 10 else sample_dates,
+            )
         if calls_made % 6 == 0:
             _LOGGER.warning(
                 "Statistics backfill progress [%s]: checked %04d-%02d (%s), "
