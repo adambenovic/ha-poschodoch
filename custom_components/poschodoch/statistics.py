@@ -31,6 +31,13 @@ try:
 except ImportError:
     StatisticMeanType = None
 
+# Same deprecation pattern as mean_type (also confirmed live against
+# 2026.9.4), but there's no importable symbol to probe for this one —
+# TypedDict introspection instead.
+_METADATA_SUPPORTS_UNIT_CLASS = "unit_class" in StatisticMetaData.__annotations__
+
+_UNIT_CLASS_BY_UNIT = {"L": "volume"}
+
 _LOGGER = logging.getLogger(__name__)
 
 MAX_BACKFILL_MONTHS = 700
@@ -44,6 +51,8 @@ WATER_SERIES = {
 
 def _build_metadata(statistic_id: str, name: str, unit: str | None) -> StatisticMetaData:
     extra = {"mean_type": StatisticMeanType.NONE} if StatisticMeanType is not None else {"has_mean": False}
+    if _METADATA_SUPPORTS_UNIT_CLASS:
+        extra["unit_class"] = _UNIT_CLASS_BY_UNIT.get(unit)
     return StatisticMetaData(
         has_sum=True,
         name=name,

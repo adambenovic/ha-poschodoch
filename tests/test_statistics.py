@@ -24,6 +24,27 @@ def test_build_metadata_includes_mean_type_when_available():
         assert metadata["has_mean"] is False
 
 
+def test_build_metadata_includes_unit_class_for_volume_when_supported():
+    """Same deprecation pattern as mean_type, confirmed live against HA
+    2026.9.4 — but there's no importable symbol to probe for this one, so
+    availability is checked via TypedDict introspection instead."""
+    metadata = stats._build_metadata("poschodoch:cold_water_daily", "Cold water", "L")
+
+    if stats._METADATA_SUPPORTS_UNIT_CLASS:
+        assert metadata["unit_class"] == "volume"
+    else:
+        assert "unit_class" not in metadata
+
+
+def test_build_metadata_omits_unit_class_for_unitless_series():
+    metadata = stats._build_metadata("poschodoch:heating_daily_kuchyna", "Heating", None)
+
+    if stats._METADATA_SUPPORTS_UNIT_CLASS:
+        assert metadata["unit_class"] is None
+    else:
+        assert "unit_class" not in metadata
+
+
 def test_entries_belong_to_month_true_when_dates_match():
     entries = [{"date": "2022-03-01", "consumption": 1.0}]
     assert stats._entries_belong_to_month(entries, 2022, 3) is True
