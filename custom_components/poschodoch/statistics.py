@@ -165,8 +165,13 @@ async def _sweep_backward(
         calls_made,
     )
 
-    for entries in merged.values():
-        entries.sort(key=lambda e: e["date"])
+    for key, entries in merged.items():
+        # Adjacent months' independent API calls can both include the same
+        # boundary day — keep the last-seen value for any duplicate date
+        # rather than passing duplicate timestamps into the statistics
+        # import (suspected cause of a silent, all-or-nothing failure).
+        by_date = {e["date"]: e for e in entries}
+        merged[key] = sorted(by_date.values(), key=lambda e: e["date"])
     return merged
 
 
@@ -194,7 +199,15 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
             continue
         statistic_id = f"{DOMAIN}:{slug}"
         metadata = _build_metadata(statistic_id, name, unit)
-        async_add_external_statistics(hass, metadata, _build_statistics(entries, 0.0))
+        points = _build_statistics(entries, 0.0)
+        _LOGGER.warning(
+            "Statistics backfill: submitting %d points for %s (%s..%s)",
+            len(points),
+            statistic_id,
+            points[0]["start"] if points else None,
+            points[-1]["start"] if points else None,
+        )
+        async_add_external_statistics(hass, metadata, points)
 
     for room, entries in heating_history.items():
         if not entries:
@@ -203,7 +216,15 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         metadata = _build_metadata(
             statistic_id, f"Heating daily consumption - {room}", None
         )
-        async_add_external_statistics(hass, metadata, _build_statistics(entries, 0.0))
+        points = _build_statistics(entries, 0.0)
+        _LOGGER.warning(
+            "Statistics backfill: submitting %d points for %s (%s..%s)",
+            len(points),
+            statistic_id,
+            points[0]["start"] if points else None,
+            points[-1]["start"] if points else None,
+        )
+        async_add_external_statistics(hass, metadata, points)
 
     hass.config_entries.async_update_entry(
         entry, data={**entry.data, CONF_STATS_BACKFILLED: True}

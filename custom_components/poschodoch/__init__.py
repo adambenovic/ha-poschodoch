@@ -15,6 +15,7 @@ from .const import (
     CONF_ID_REFRESH_TOKEN,
     CONF_ID_TOKEN,
     CONF_REFRESH_AFTER,
+    CONF_STATS_BACKFILLED,
     CONF_TOKEN_EXPIRES_AT,
     DOMAIN,
 )
@@ -63,6 +64,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Failed to backfill poschodoch.sk long-term statistics",
                 exc_info=True,
             )
+
+    # TEMPORARY: the previous backfill completed (flag set true) but its
+    # data silently never landed in the recorder (suspected duplicate-
+    # timestamp collision from adjacent-month boundary overlap, now
+    # fixed). Force one more clean re-backfill to confirm. Remove after.
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_STATS_BACKFILLED: False}
+    )
 
     entry.async_create_background_task(
         hass, _run_backfill(), "poschodoch_stats_backfill"

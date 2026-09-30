@@ -97,6 +97,41 @@ def test_build_statistics_skips_null_consumption_days():
 
 
 @pytest.mark.asyncio
+async def test_sweep_backward_deduplicates_boundary_day_across_adjacent_months():
+    """Suspected live bug: adjacent months' independent API calls can both
+    include the same boundary day, producing duplicate (date, room)
+    entries once merged. The recorder's per-row statistics insert appears
+    to silently drop an entire import when it hits a same-timestamp
+    collision it doesn't like, which matches heating series ending up
+    with zero rows despite the sweep reporting real months found."""
+    responses = {
+        (2026, 9): {
+            "S": [
+                {"date": "2026-09-01", "consumption": 1.0},
+                {"date": "2026-08-31", "consumption": 99.0},  # boundary overlap
+            ]
+        },
+        (2026, 8): {
+            "S": [
+                {"date": "2026-08-31", "consumption": 2.0},
+                {"date": "2026-08-01", "consumption": 3.0},
+            ]
+        },
+        (2026, 7): {"S": []},
+        (2026, 6): {"S": []},
+        (2026, 5): {"S": []},
+    }
+
+    async def fetch_month(year, month):
+        return responses[(year, month)]
+
+    result = await stats._sweep_backward(fetch_month, 2026, 9)
+
+    dates = [e["date"] for e in result["S"]]
+    assert dates == ["2026-08-01", "2026-08-31", "2026-09-01"]
+
+
+@pytest.mark.asyncio
 async def test_sweep_backward_merges_months_until_consecutive_misses():
     """Confirmed live: a real account's history can have an isolated
     flaky/empty month in the middle of otherwise-real data (cause
