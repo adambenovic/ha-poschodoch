@@ -68,6 +68,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, _run_backfill(), "poschodoch_stats_backfill"
     )
 
+    async def debug_probe(call) -> None:
+        for year, month in [(2023, 9), (2023, 8), (2023, 7), (2020, 1), (2018, 6)]:
+            entries = await client.get_daily_consumption(year=year, month=month)
+            dates = sorted(e["date"] for e in entries.get("S", []))
+            _LOGGER.warning(
+                "DIAGNOSTIC boundary probe %04d-%02d: %d entries, range %s..%s",
+                year, month, len(dates), dates[0] if dates else None, dates[-1] if dates else None,
+            )
+
+    hass.services.async_register(DOMAIN, "debug_probe", debug_probe)
+
     return True
 
 
