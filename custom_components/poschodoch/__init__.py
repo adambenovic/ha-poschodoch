@@ -1,6 +1,7 @@
 """The poschodoch.sk integration."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from homeassistant.config_entries import ConfigEntry
@@ -8,6 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from . import statistics
 from .api import PoschodochApiClient
 from .const import (
     CONF_ID_REFRESH_TOKEN,
@@ -17,6 +19,8 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import PoschodochDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
 
@@ -48,6 +52,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    async def _run_backfill() -> None:
+        try:
+            await statistics.async_backfill(hass, entry, client)
+        except Exception:  # pylint: disable=broad-except
+            # Supplementary long-term stats — must never affect the
+            # integration's own loaded state.
+            _LOGGER.warning(
+                "Failed to backfill poschodoch.sk long-term statistics",
+                exc_info=True,
+            )
+
+    entry.async_create_background_task(
+        hass, _run_backfill(), "poschodoch_stats_backfill"
+    )
+
     return True
 
 

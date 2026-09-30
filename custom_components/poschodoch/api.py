@@ -64,12 +64,16 @@ class PoschodochApiClient:
         self._menu_map_fetched_at = now
         return self._menu_map
 
-    async def get_daily_consumption(self) -> dict[str, list[dict]]:
+    async def get_daily_consumption(
+        self, year: int | None = None, month: int | None = None
+    ) -> dict[str, list[dict]]:
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
-        body = await self.request(
-            "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "S"}
-        )
+        params = {"menuId": menu_id, "type": "S"}
+        if year is not None:
+            params["year"] = year
+            params["month"] = month
+        body = await self.request("GET", "Flat/DailyConsumption", params=params)
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
             partitioned.setdefault(entry["Code"], []).append(
@@ -77,12 +81,16 @@ class PoschodochApiClient:
             )
         return partitioned
 
-    async def get_heating_daily_consumption(self) -> dict[str, list[dict]]:
+    async def get_heating_daily_consumption(
+        self, year: int | None = None, month: int | None = None
+    ) -> dict[str, list[dict]]:
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
-        body = await self.request(
-            "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "U"}
-        )
+        params = {"menuId": menu_id, "type": "U"}
+        if year is not None:
+            params["year"] = year
+            params["month"] = month
+        body = await self.request("GET", "Flat/DailyConsumption", params=params)
         by_room: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
             by_room.setdefault(entry["Type"], []).append(

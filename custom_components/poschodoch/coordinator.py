@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from . import statistics
 from .api import PoschodochApiClient, PoschodochAuthError
 from .const import DEFAULT_SCAN_INTERVAL_HOURS, DOMAIN
 
@@ -48,6 +49,18 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
             # completely undiagnosable from the logs alone.
             _LOGGER.exception("Unexpected error fetching poschodoch.sk data")
             raise UpdateFailed(str(err)) from err
+
+        try:
+            await statistics.async_sync_latest(
+                self.hass, daily_consumption, heating_daily_consumption
+            )
+        except Exception:  # pylint: disable=broad-except
+            # Long-term statistics are supplementary — a failure here must
+            # never take down the live sensors.
+            _LOGGER.warning(
+                "Failed to sync long-term statistics for poschodoch.sk data",
+                exc_info=True,
+            )
 
         return {
             "daily_consumption": daily_consumption,

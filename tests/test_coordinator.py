@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -101,3 +101,38 @@ async def test_coordinator_logs_full_traceback_on_unexpected_errors(hass, caplog
     assert any(r.exc_info is not None for r in records), (
         "expected a log record with a full traceback (exc_info), found none"
     )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_syncs_statistics_with_fetched_daily_data(hass):
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    with patch(
+        "custom_components.poschodoch.coordinator.statistics.async_sync_latest",
+        new=AsyncMock(),
+    ) as mock_sync:
+        await coordinator.async_refresh()
+
+    mock_sync.assert_called_once_with(
+        hass,
+        client.get_daily_consumption.return_value,
+        client.get_heating_daily_consumption.return_value,
+    )
+
+
+@pytest.mark.asyncio
+async def test_coordinator_survives_statistics_sync_failure(hass):
+    """Long-term statistics are supplementary — a failure there must never
+    take down the live sensors."""
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    with patch(
+        "custom_components.poschodoch.coordinator.statistics.async_sync_latest",
+        new=AsyncMock(side_effect=RuntimeError("recorder not ready")),
+    ):
+        await coordinator.async_refresh()
+
+    assert coordinator.last_exception is None
+    assert coordinator.data["account"]["due_balance"] == 195.60

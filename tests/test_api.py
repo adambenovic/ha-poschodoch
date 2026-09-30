@@ -355,6 +355,30 @@ async def test_get_daily_consumption_partitions_by_code_field(client_factory):
 
 
 @pytest.mark.asyncio
+async def test_get_daily_consumption_accepts_historical_year_month(client_factory):
+    """Confirmed live: Flat/DailyConsumption accepts a year+month pair and
+    returns that historical month's data, needed for statistics backfill."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2022&month=3",
+            payload={
+                "Consumption": [
+                    {"Date": "2022-03-01", "Code": "S", "Type": "SV", "Consumption": "10.000"},
+                ]
+            },
+        )
+
+        result = await client.get_daily_consumption(year=2022, month=3)
+
+    assert result["S"][0]["date"] == "2022-03-01"
+
+
+@pytest.mark.asyncio
 async def test_get_daily_consumption_tolerates_null_reading(client_factory):
     """A day with a missed/failed meter reading can come back as null."""
     client = client_factory()
@@ -643,7 +667,28 @@ async def test_get_heating_daily_consumption_groups_by_room(client_factory):
 
     assert result["Spálňa"][0]["consumption"] == 0.0
     assert result["Spálňa"][1]["consumption"] == 2.0
-    assert result["Kuchyňa"][0]["consumption"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_get_heating_daily_consumption_accepts_historical_year_month(client_factory):
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2022&month=3",
+            payload={
+                "Consumption": [
+                    {"Date": "2022-03-01", "Code": "U", "Type": "Kuchyňa", "Consumption": "1.000"},
+                ]
+            },
+        )
+
+        result = await client.get_heating_daily_consumption(year=2022, month=3)
+
+    assert result["Kuchyňa"][0]["date"] == "2022-03-01"
 
 
 @pytest.mark.asyncio

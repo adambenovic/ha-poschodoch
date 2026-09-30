@@ -163,3 +163,154 @@ async def test_full_setup_creates_real_sensor_entities(hass):
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_triggers_statistics_backfill(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "id_token": "some-token",
+            "id_refresh_token": "some-refresh-token",
+            "token_expires_at": "2099-01-01T00:00:00+00:00",
+            "refresh_after": "2099-01-01T00:00:00+00:00",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[
+                {"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."},
+                {"MenuId": 47, "MenuCode": "ConsumptionStatus", "MenuName": "..."},
+                {"MenuId": 14, "MenuCode": "MeterReadings", "MenuName": "..."},
+                {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
+                {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
+            ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U",
+            payload={"Consumption": []},
+        )
+        for type_code in ("S", "T", "U"):
+            mocked.get(
+                f"https://api.poschodoch.sk/api/Flat/ConsumptionStatus?menuId=47&type={type_code}",
+                payload={
+                    "ActualConsumption": "0",
+                    "DiffConsumption": "0",
+                    "PercConsumption": "0",
+                    "Unit": "m3",
+                },
+            )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/MeterReadings?menuId=14&disassembled=1",
+            payload={"MeterReadings": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/Account?menuId=1",
+            payload={"DueBalance": "0", "DueDate": "2026-01-01", "Account": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
+        )
+
+        with patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "custom_components.poschodoch.statistics.async_backfill",
+            new=AsyncMock(),
+        ) as mock_backfill:
+            await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    mock_backfill.assert_called_once()
+
+    with patch(
+        "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_survives_statistics_backfill_failure(hass):
+    """A backfill failure (e.g. recorder not ready yet) must never prevent
+    the integration from loading."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "id_token": "some-token",
+            "id_refresh_token": "some-refresh-token",
+            "token_expires_at": "2099-01-01T00:00:00+00:00",
+            "refresh_after": "2099-01-01T00:00:00+00:00",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[
+                {"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."},
+                {"MenuId": 47, "MenuCode": "ConsumptionStatus", "MenuName": "..."},
+                {"MenuId": 14, "MenuCode": "MeterReadings", "MenuName": "..."},
+                {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
+                {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
+            ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U",
+            payload={"Consumption": []},
+        )
+        for type_code in ("S", "T", "U"):
+            mocked.get(
+                f"https://api.poschodoch.sk/api/Flat/ConsumptionStatus?menuId=47&type={type_code}",
+                payload={
+                    "ActualConsumption": "0",
+                    "DiffConsumption": "0",
+                    "PercConsumption": "0",
+                    "Unit": "m3",
+                },
+            )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/MeterReadings?menuId=14&disassembled=1",
+            payload={"MeterReadings": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/Account?menuId=1",
+            payload={"DueBalance": "0", "DueDate": "2026-01-01", "Account": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
+        )
+
+        with patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "custom_components.poschodoch.statistics.async_backfill",
+            new=AsyncMock(side_effect=RuntimeError("recorder not ready")),
+        ):
+            result = await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    assert result is True
+    assert entry.state.value == "loaded"
+
+    with patch(
+        "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id)

@@ -212,6 +212,45 @@ Per-room heating sensors are created dynamically from whatever rooms
 `MeterReadings` returns for meter type `UK` — no hardcoded room names,
 so this adapts automatically to any building's actual layout.
 
+## Long-term statistics (`statistics.py`)
+
+The daily water/heating sensors only ever show the latest reading, but
+`Flat/DailyConsumption` has years of real history available — confirmed
+live via `year`/`month` query params (e.g. cold water data goes back to
+at least 2010; heating starts later, at whatever point each room's meter
+was added). This is imported into HA's long-term statistics store
+(Settings → Statistics, Energy dashboard) as a standalone addition —
+separate statistic IDs (`poschodoch:cold_water_daily`,
+`poschodoch:hot_water_daily`, `poschodoch:heating_daily_<room slug>`),
+no new entities, existing sensors untouched.
+
+- **One-time backfill**: on first setup only (guarded by a
+  `stats_backfilled` flag persisted on the config entry), walks backward
+  month by month calling `Flat/DailyConsumption?...&year=<yyyy>&month=<mm>`
+  for both the water (`type=S`, yields cold+hot together) and heating
+  (`type=U`, yields all rooms together) series, until a month's data
+  doesn't actually belong to that month (checked defensively the same
+  way as the repair-fund fix, in case this endpoint ever exhibits the
+  same "echoes an unrelated period" quirk — not observed here, but out-
+  of-range months were confirmed live to correctly come back empty).
+  Runs as an entry-scoped background task so it never blocks or delays
+  startup even if it takes minutes to walk years of history.
+- **Ongoing sync**: every regular coordinator poll re-uses the
+  current-period data it already fetched (no extra API calls) and
+  imports any days not yet present in long-term stats, continuing the
+  cumulative `sum` from the last known point (via
+  `get_last_statistics`). A poll that misses several days across a
+  month boundary won't backfill the gap — that's an accepted, self-
+  healing-on-restart limitation, not attempted here.
+- Both the backfill and the per-poll sync call
+  `async_add_external_statistics`, which internally queues an idempotent
+  import job — safe to call with overlapping timestamps from both paths
+  without special coordination between them.
+- A failure in either path is caught and logged as a warning at the call
+  site (`__init__.py` for backfill, `coordinator.py` for the per-poll
+  sync) — long-term statistics are supplementary and must never affect
+  the integration's own loaded state or the live sensors.
+
 ## Error handling
 
 - `401` on any call → one `Auth/Refresh` attempt → retry once → if
