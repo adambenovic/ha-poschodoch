@@ -56,6 +56,7 @@ class PoschodochApiClient:
         self._menu_map_fetched_at: datetime | None = None
         self._portal_id: int | None = None
         self._repair_fund_history: dict[int, list[dict]] | None = None
+        self._diag_raw: dict[int, list] = {}
 
     async def get_menu_map(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -198,6 +199,11 @@ class PoschodochApiClient:
         recent_entries = sorted(all_entries, key=lambda e: e["date"], reverse=True)[:5]
         since_year = min(self._repair_fund_history, default=current_year)
 
+        _LOGGER.warning(
+            "DIAGNOSTIC RepairFund ALL YEARS: %s",
+            json.dumps(self._diag_raw, ensure_ascii=False),
+        )
+
         return {
             "balance": balance,
             "year": current_year,
@@ -209,11 +215,7 @@ class PoschodochApiClient:
         body = await self.request(
             "GET", "Object/RepairFund", params={"menuId": menu_id, "year": year}
         )
-        _LOGGER.warning(
-            "DIAGNOSTIC RepairFund RAW year=%s: %s",
-            year,
-            json.dumps(body, ensure_ascii=False),
-        )
+        self._diag_raw[year] = body["RepairFund"]
         return [
             {
                 "amount": _to_float(e["Amount"]),
