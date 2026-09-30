@@ -1,11 +1,14 @@
 """Long-term statistics backfill/sync for water and heating consumption.
 
 poschodoch.sk's daily-consumption sensors only ever show the latest
-reading; the API itself has years of history available (confirmed live:
-water back to at least 2010) via Flat/DailyConsumption's year+month
-params. This imports that history into Home Assistant's long-term
-statistics store (Settings -> Statistics / Energy dashboard graphs) —
-separate from the existing sensors, which are untouched.
+reading; the API itself has years of history available via
+Flat/DailyConsumption's year+month params, though usable metered data
+only goes back to around mid-2023 in practice — older periods return
+correctly-dated placeholder entries with consumption always null (see
+_entries_belong_to_month). This imports that history into Home
+Assistant's long-term statistics store (Settings -> Statistics / Energy
+dashboard graphs) — separate from the existing sensors, which are
+untouched.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
 
+from .api import PoschodochAuthError
 from .const import CONF_STATS_BACKFILLED, DOMAIN
 
 try:
@@ -103,6 +107,23 @@ def _month_before(year: int, month: int) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
+def _iter_water_and_heating_series(
+    water_by_code: dict[str, list[dict]], heating_by_room: dict[str, list[dict]]
+):
+    """(statistic_id, name, unit, entries) for every water and heating
+    series — the shared shape async_backfill and async_sync_latest both
+    otherwise separately duplicate."""
+    for code, (slug, name, unit) in WATER_SERIES.items():
+        yield f"{DOMAIN}:{slug}", name, unit, water_by_code.get(code, [])
+    for room, entries in heating_by_room.items():
+        yield (
+            f"{DOMAIN}:heating_daily_{slugify(room)}",
+            f"Heating daily consumption - {room}",
+            None,
+            entries,
+        )
+
+
 async def _sweep_backward(
     fetch_month: Callable[[int, int], Awaitable[dict[str, list[dict]]]],
     start_year: int,
@@ -130,6 +151,12 @@ async def _sweep_backward(
     for _ in range(max_months):
         try:
             by_series = await fetch_month(year, month)
+        except PoschodochAuthError:
+            # A real auth failure is not "just another miss" — swallowing
+            # it here would let async_backfill mark the whole sweep
+            # complete even though it was cut short, permanently
+            # truncating long-term stats with no recovery path.
+            raise
         except Exception:  # pylint: disable=broad-except
             # Confirmed live: a sufficiently old month can return a
             # non-JSON body, raising inside the request layer. Treat a
@@ -204,29 +231,12 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         client.get_heating_daily_consumption, now.year, now.month, label="heating"
     )
 
-    for code, (slug, name, unit) in WATER_SERIES.items():
-        entries = water_history.get(code, [])
+    for statistic_id, name, unit, entries in _iter_water_and_heating_series(
+        water_history, heating_history
+    ):
         if not entries:
             continue
-        statistic_id = f"{DOMAIN}:{slug}"
         metadata = _build_metadata(statistic_id, name, unit)
-        points = _build_statistics(entries, 0.0)
-        _LOGGER.info(
-            "Statistics backfill: submitting %d points for %s (%s..%s)",
-            len(points),
-            statistic_id,
-            points[0]["start"] if points else None,
-            points[-1]["start"] if points else None,
-        )
-        async_add_external_statistics(hass, metadata, points)
-
-    for room, entries in heating_history.items():
-        if not entries:
-            continue
-        statistic_id = f"{DOMAIN}:heating_daily_{slugify(room)}"
-        metadata = _build_metadata(
-            statistic_id, f"Heating daily consumption - {room}", None
-        )
         points = _build_statistics(entries, 0.0)
         _LOGGER.info(
             "Statistics backfill: submitting %d points for %s (%s..%s)",
@@ -246,10 +256,15 @@ async def _last_statistic(hass: HomeAssistant, statistic_id: str) -> tuple[datet
     """get_last_statistics does blocking database I/O — must go through
     the executor, never called directly from the event loop.
 
-    Confirmed live: rows' "start" is a float Unix timestamp (seconds),
-    not a datetime — StatisticsRow's actual, longstanding shape."""
+    Confirmed against HA source: "start" isn't a valid member of the
+    types param (only last_reset/max/mean/min/state/sum are) — every
+    returned row carries "start" regardless of what's requested, but
+    passing it anyway defeats the recorder's sum-only fast path for no
+    benefit. Confirmed live: rows' "start" is a float Unix timestamp
+    (seconds), not a datetime — StatisticsRow's actual, longstanding
+    shape."""
     result = await hass.async_add_executor_job(
-        get_last_statistics, hass, 1, statistic_id, True, {"sum", "start"}
+        get_last_statistics, hass, 1, statistic_id, True, {"sum"}
     )
     rows = result.get(statistic_id)
     if not rows:
@@ -293,20 +308,11 @@ async def async_sync_latest(
     statistics yet. Only catches up within that period; a gap spanning a
     full missed month is not backfilled here (that's what async_backfill
     is for)."""
-    for code, (slug, name, unit) in WATER_SERIES.items():
-        entries = daily_consumption.get(code, [])
+    for statistic_id, name, unit, entries in _iter_water_and_heating_series(
+        daily_consumption, heating_daily_consumption
+    ):
         if entries:
-            await _sync_one_series(hass, f"{DOMAIN}:{slug}", name, unit, entries)
-
-    for room, entries in heating_daily_consumption.items():
-        if entries:
-            await _sync_one_series(
-                hass,
-                f"{DOMAIN}:heating_daily_{slugify(room)}",
-                f"Heating daily consumption - {room}",
-                None,
-                entries,
-            )
+            await _sync_one_series(hass, statistic_id, name, unit, entries)
 
 
 async def get_rolling_average(

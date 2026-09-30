@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from custom_components.poschodoch import statistics as stats
+from custom_components.poschodoch.api import PoschodochAuthError
 from custom_components.poschodoch.const import CONF_STATS_BACKFILLED, DOMAIN
 
 
@@ -242,6 +243,26 @@ async def test_sweep_backward_treats_fetch_errors_as_a_miss():
 
 
 @pytest.mark.asyncio
+async def test_sweep_backward_lets_auth_errors_propagate():
+    """A real PoschodochAuthError (refresh token rejected mid-sweep) must
+    not be treated as just another miss — that would let async_backfill
+    mark CONF_STATS_BACKFILLED=True even though the sweep was cut short by
+    an auth failure, permanently truncating long-term stats with no
+    recovery path. Only genuine data/parse failures are tolerated misses."""
+    responses = {
+        (2026, 9): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
+    }
+
+    async def fetch_month(year, month):
+        if (year, month) in responses:
+            return responses[(year, month)]
+        raise PoschodochAuthError("Refresh token rejected")
+
+    with pytest.raises(PoschodochAuthError):
+        await stats._sweep_backward(fetch_month, 2026, 9)
+
+
+@pytest.mark.asyncio
 async def test_sweep_backward_respects_max_months_cap():
     calls = []
 
@@ -323,7 +344,7 @@ async def test_async_sync_latest_reads_last_statistic_via_executor(hass):
     ) as mock_executor_job:
         await stats.async_sync_latest(hass, daily_consumption, {})
 
-    mock_executor_job.assert_called_once_with(mock_get_last, hass, 1, f"{DOMAIN}:cold_water_daily", True, {"sum", "start"})
+    mock_executor_job.assert_called_once_with(mock_get_last, hass, 1, f"{DOMAIN}:cold_water_daily", True, {"sum"})
 
 
 @pytest.mark.asyncio
