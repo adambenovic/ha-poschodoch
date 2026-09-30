@@ -64,34 +64,6 @@ class PoschodochApiClient:
         self._menu_map_fetched_at = now
         return self._menu_map
 
-    async def diag_probe_daily_consumption_params(self) -> None:
-        """Throwaway: only invoked manually via the debug_probe service to
-        determine whether Flat/DailyConsumption accepts a historical
-        month/year range, never called from normal setup/coordinator
-        code, so it can't affect any existing test."""
-        menu_map = await self.get_menu_map()
-        menu_id = menu_map["DailyConsumption"]
-        candidates = [
-            {"menuId": menu_id, "type": "S", "year": 1990, "month": 1},
-            {"menuId": menu_id, "type": "S", "year": 2010, "month": 1},
-            {"menuId": menu_id, "type": "S", "year": 2015, "month": 1},
-            {"menuId": menu_id, "type": "U", "year": 2018, "month": 6},
-            {"menuId": menu_id, "type": "U", "year": 2015, "month": 1},
-        ]
-        for params in candidates:
-            try:
-                body = await self.request("GET", "Flat/DailyConsumption", params=params)
-                dates = sorted(e["Date"] for e in body.get("Consumption", []))
-                _LOGGER.warning(
-                    "DIAGNOSTIC probe params=%s -> %d entries, range %s..%s",
-                    params,
-                    len(dates),
-                    dates[0] if dates else None,
-                    dates[-1] if dates else None,
-                )
-            except Exception as err:  # pylint: disable=broad-except
-                _LOGGER.warning("DIAGNOSTIC probe params=%s -> ERROR %s", params, err)
-
     async def get_daily_consumption(self) -> dict[str, list[dict]]:
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
