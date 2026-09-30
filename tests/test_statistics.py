@@ -197,7 +197,11 @@ async def test_async_sync_latest_imports_only_new_entries(hass):
     }
 
     def fake_last_stats(hass_, n, statistic_id, convert_units, types):
-        return {statistic_id: [{"start": datetime(2026, 9, 24, tzinfo=timezone.utc), "sum": 10.0}]}
+        return {
+            statistic_id: [
+                {"start": datetime(2026, 9, 24, tzinfo=timezone.utc).timestamp(), "sum": 10.0}
+            ]
+        }
 
     with patch(
         "custom_components.poschodoch.statistics.get_last_statistics",
@@ -221,7 +225,11 @@ async def test_async_sync_latest_does_nothing_when_no_new_entries(hass):
     daily_consumption = {"S": [{"date": "2026-09-24", "consumption": 10.0}]}
 
     def fake_last_stats(hass_, n, statistic_id, convert_units, types):
-        return {statistic_id: [{"start": datetime(2026, 9, 24, tzinfo=timezone.utc), "sum": 10.0}]}
+        return {
+            statistic_id: [
+                {"start": datetime(2026, 9, 24, tzinfo=timezone.utc).timestamp(), "sum": 10.0}
+            ]
+        }
 
     with patch(
         "custom_components.poschodoch.statistics.get_last_statistics",

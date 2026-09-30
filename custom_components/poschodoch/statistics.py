@@ -161,14 +161,17 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
 
 async def _last_statistic(hass: HomeAssistant, statistic_id: str) -> tuple[datetime, float] | None:
     """get_last_statistics does blocking database I/O — must go through
-    the executor, never called directly from the event loop."""
+    the executor, never called directly from the event loop.
+
+    Confirmed live: rows' "start" is a float Unix timestamp (seconds),
+    not a datetime — StatisticsRow's actual, longstanding shape."""
     result = await hass.async_add_executor_job(
         get_last_statistics, hass, 1, statistic_id, True, {"sum", "start"}
     )
     rows = result.get(statistic_id)
     if not rows:
         return None
-    return rows[0]["start"], rows[0]["sum"]
+    return datetime.fromtimestamp(rows[0]["start"], tz=timezone.utc), rows[0]["sum"]
 
 
 async def _sync_one_series(
