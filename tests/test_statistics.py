@@ -163,6 +163,29 @@ async def test_sweep_backward_tolerates_an_isolated_miss():
 
 
 @pytest.mark.asyncio
+async def test_sweep_backward_treats_fetch_errors_as_a_miss():
+    """Regression test for the live bug: for a sufficiently old month the
+    real API returned a non-JSON body, raising inside the request layer
+    and crashing the whole sweep — losing 200+ months of already-found
+    real history since nothing is written until the sweep completes. A
+    per-month fetch failure must be tolerated exactly like a data
+    mismatch, not left to blow up the entire operation."""
+    responses = {
+        (2026, 9): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
+        (2026, 8): {"S": [{"date": "2026-08-01", "consumption": 2.0}]},
+    }
+
+    async def fetch_month(year, month):
+        if (year, month) in responses:
+            return responses[(year, month)]
+        raise ValueError("unexpected character: line 1 column 1 (char 0)")
+
+    result = await stats._sweep_backward(fetch_month, 2026, 9)
+
+    assert [e["date"] for e in result["S"]] == ["2026-08-01", "2026-09-01"]
+
+
+@pytest.mark.asyncio
 async def test_sweep_backward_respects_max_months_cap():
     calls = []
 

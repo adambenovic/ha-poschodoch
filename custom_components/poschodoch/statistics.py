@@ -117,7 +117,21 @@ async def _sweep_backward(
     calls_made = 0
     consecutive_misses = 0
     for _ in range(max_months):
-        by_series = await fetch_month(year, month)
+        try:
+            by_series = await fetch_month(year, month)
+        except Exception:  # pylint: disable=broad-except
+            # Confirmed live: a sufficiently old month can return a
+            # non-JSON body, raising inside the request layer. Treat a
+            # failed fetch the same as a data mismatch — one bad month
+            # must not blow up a sweep that's already found real history.
+            _LOGGER.debug(
+                "Statistics backfill [%s]: fetch failed for %04d-%02d, treating as a miss",
+                label,
+                year,
+                month,
+                exc_info=True,
+            )
+            by_series = {}
         calls_made += 1
         hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
         if calls_made % 6 == 0:

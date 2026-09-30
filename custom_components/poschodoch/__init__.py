@@ -64,15 +64,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 exc_info=True,
             )
 
-    # TEMPORARY: force exactly one clean re-backfill on this deploy so the
-    # consecutive-miss fix picks up the years of history the earlier,
-    # buggy sweep silently truncated. Remove after confirming it worked.
-    from .const import CONF_STATS_BACKFILLED
-
-    hass.config_entries.async_update_entry(
-        entry, data={**entry.data, CONF_STATS_BACKFILLED: False}
-    )
-
     entry.async_create_background_task(
         hass, _run_backfill(), "poschodoch_stats_backfill"
     )
