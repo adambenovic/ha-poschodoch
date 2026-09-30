@@ -32,9 +32,29 @@ custom repository.
   the backend (`Auth/LoginWithGoogleToken`, confirmed to accept a JSON
   object of type `GoogleAuthViewModel`) for the app's own session:
   - `id_token` — short-lived (observed 2-hour lifetime), sent on every
-    API call via the **`X-Auth-Token`** request header (confirmed via
-    the API's CORS `Access-Control-Allow-Headers` response, which
-    allows exactly `Origin, Content-Type, X-Auth-Token`).
+    API call via the standard **`Authorization: Bearer <id_token>`**
+    request header. (Earlier drafts of this spec assumed the custom
+    `X-Auth-Token` header seen in the CORS `Access-Control-Allow-Headers`
+    allow-list was the real auth mechanism — that allow-list only says
+    what's *permitted* cross-origin, not what's *required*; live testing
+    against every endpoint confirmed `Authorization: Bearer` is what's
+    actually checked everywhere, including `Dashboard`/`Flat`/`Object`
+    endpoints.)
+  - A token from `Auth/LoginWithGoogleToken` (or `Auth/refresh`) is
+    valid for authentication but is **not yet bound to a unit/portal**.
+    `Auth/UnitList` works with it directly, but any `Dashboard`/`Flat`/
+    `Object` call 401s until `Auth/changeunit?portalId=<id>` has been
+    called with it — this activation returns its own fresh token pair,
+    which is the one actually used afterward. The real SPA always calls
+    `UnitList` → `changeunit` immediately after login; this integration
+    now does the same, and additionally re-runs that activation after
+    every `Auth/refresh` (harmless even where not strictly required,
+    since the real server appears to remember unit-activation per
+    account, not per token — but not guaranteed to hold in every case).
+  - `Auth/refresh` rejects a `refresh_token` that has never been
+    through `Auth/changeunit` — so the very first use of a pair copied
+    straight out of a browser must skip `Auth/refresh` entirely and go
+    directly to `UnitList` + `changeunit`.
   - `id_refresh_token` — long-lived opaque token (not a JWT), stored in
     the SPA's `localStorage`.
   - The SPA's own client policy (read directly from its localStorage
@@ -118,20 +138,24 @@ tests/
 - Holds `id_token`, `id_refresh_token`, `token_expires_at` (computed:
   now + 2h at issuance, matching the observed lifetime), `unit_id`,
   `portal_id`.
-- `async def request(method, path, **kwargs)`: injects `X-Auth-Token`;
-  on `401`, calls `_refresh()` once and retries; raises
-  `PoschodochAuthError` (mapped to `ConfigEntryAuthFailed` in the
-  coordinator) if the retry also fails.
+- `async def request(method, path, **kwargs)`: injects
+  `Authorization: Bearer <id_token>`; on `401`, calls `_refresh()` once
+  and retries; raises `PoschodochAuthError` (mapped to
+  `ConfigEntryAuthFailed` in the coordinator) if the retry also fails.
+- `async def activate()`: for a token that has never been used with
+  this client (e.g. straight out of the browser) — calls `UnitList` +
+  `changeunit` directly with the as-given token, skipping `Auth/refresh`
+  entirely (which rejects never-activated refresh tokens). Used once,
+  by the config flow, during initial setup.
 - `async def _refresh()`: proactive if `now >= refresh_after`,
-  otherwise reactive on 401. POSTs the bare-string body to
-  `Auth/Refresh`. Parses the response permissively: accept either a
-  flat object with an `IdToken`/`id_token`/`token` field (case-
-  insensitive) or (if the shape turns out nested) a documented
-  fallback path — **this parsing function is the single piece of the
-  client to re-verify against a real response during setup testing**,
-  isolated so it's a one-function fix if the assumed shape is wrong.
-  Persists a rotated refresh token (if the response includes a new
-  one) back to the config entry via
+  otherwise reactive on 401. POSTs `{"AuthToken": ..., "RefreshToken":
+  ...}` (PascalCase JSON object) to `Auth/refresh` with
+  `Authorization: Bearer <current id_token>`. Parses the real response
+  shape: `{"auth_token": ..., "refresh_token": ..., "expires_in": ...}`
+  (snake_case). The resulting token authenticates but isn't yet unit-
+  bound, so `_refresh()` always finishes by re-running the same
+  activation (`UnitList` + `changeunit`) before returning. Persists the
+  final, activated token pair back to the config entry via
   `hass.config_entries.async_update_entry`.
 - `async def get_menu_map()`: fetches and caches `Dashboard/Menu`,
   returns a `dict[MenuCode, MenuId]`. Cached for 24h (menu
@@ -204,16 +228,28 @@ so this adapts automatically to any building's actual layout.
 - No tests run against the real production API or with real
   credentials.
 
-## Open risk (explicit, not hidden)
+## Resolved risks
 
-The exact success-response shape of `Auth/Refresh` is unverified since
-constructing it further requires a genuine valid refresh token, which
-wasn't available in a way that was safe/appropriate to test blind.
-`api.py`'s response-parsing step for this one call is written
-defensively and isolated specifically so that if the real shape
-differs from what's assumed, it's a single, obvious, easily-patched
-spot — expected to be exercised and, if needed, corrected the first
-time the integration is actually configured with a real token.
+Two things flagged as open/unverified in earlier drafts of this spec
+were resolved through live testing against the real API once a real
+account and real HAR captures were available:
+
+- `Auth/refresh`'s success response shape: confirmed to be
+  `{"auth_token": ..., "refresh_token": ..., "expires_in": ...}`.
+- The actual authentication header: confirmed to be
+  `Authorization: Bearer <token>` on **every** endpoint, not the
+  `X-Auth-Token` header originally inferred from a CORS allow-list (an
+  allow-list documents what's *permitted*, not what's *checked* server-
+  side — this was a flawed inference that went undetected for a while
+  because no endpoint other than `Auth/refresh` had ever been tested
+  live with real credentials until debugging a real setup failure
+  forced the issue).
+- The unit-activation requirement (`Auth/UnitList` + `Auth/changeunit`
+  needed after login *and* after every refresh) was discovered the same
+  way: by reading the actual error sequence in Home Assistant's logs
+  during a real failed setup, then cross-referencing against a full
+  HAR of a real login to see what the genuine client does that this
+  integration didn't.
 
 ## Out of scope for v1
 

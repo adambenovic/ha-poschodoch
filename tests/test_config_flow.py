@@ -18,6 +18,9 @@ async def test_user_flow_creates_entry_on_valid_refresh_token(hass):
     assert result["step_id"] == "user"
 
     with patch(
+        "custom_components.poschodoch.config_flow.PoschodochApiClient.activate",
+        new=AsyncMock(return_value=None),
+    ), patch(
         "custom_components.poschodoch.config_flow.PoschodochApiClient.get_menu_map",
         new=AsyncMock(return_value={"account": 1}),
     ):
@@ -38,7 +41,7 @@ async def test_user_flow_shows_error_on_invalid_refresh_token(hass):
     )
 
     with patch(
-        "custom_components.poschodoch.config_flow.PoschodochApiClient.get_menu_map",
+        "custom_components.poschodoch.config_flow.PoschodochApiClient.activate",
         new=AsyncMock(side_effect=PoschodochAuthError("rejected")),
     ):
         result2 = await hass.config_entries.flow.async_configure(
@@ -68,6 +71,9 @@ async def test_reauth_updates_existing_entry_with_new_refresh_token(hass):
     assert result["step_id"] == "reauth_confirm"
 
     with patch(
+        "custom_components.poschodoch.config_flow.PoschodochApiClient.activate",
+        new=AsyncMock(return_value=None),
+    ), patch(
         "custom_components.poschodoch.config_flow.PoschodochApiClient.get_menu_map",
         new=AsyncMock(return_value={"account": 1}),
     ), patch(

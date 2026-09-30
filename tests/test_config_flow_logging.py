@@ -14,7 +14,7 @@ async def test_unexpected_exception_is_logged(hass, caplog):
     )
 
     with patch(
-        "custom_components.poschodoch.config_flow.PoschodochApiClient.get_menu_map",
+        "custom_components.poschodoch.config_flow.PoschodochApiClient.activate",
         new=AsyncMock(side_effect=RuntimeError("boom")),
     ):
         with caplog.at_level(logging.ERROR):

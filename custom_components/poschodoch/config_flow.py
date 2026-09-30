@@ -41,6 +41,11 @@ class PoschodochConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             refresh_after=now,
             session=async_get_clientsession(self.hass),
         )
+        # A pair copied straight out of the browser has never been used
+        # with this API client before, so it must be bound to a unit via
+        # Auth/changeunit before anything else works. This also updates
+        # token_expires_at/refresh_after for all subsequent calls.
+        await client.activate()
         await client.get_menu_map()
         return {
             CONF_ID_TOKEN: client._id_token,

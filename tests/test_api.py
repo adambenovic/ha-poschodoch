@@ -48,7 +48,7 @@ async def test_request_sends_current_id_token_as_auth_header(client_factory):
 
     key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
     request = mocked.requests[key][0]
-    assert request.kwargs["headers"]["X-Auth-Token"] == "the-current-token"
+    assert request.kwargs["headers"]["Authorization"] == "Bearer the-current-token"
 
 
 @pytest.mark.asyncio
@@ -97,11 +97,11 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
         URL("https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159"),
     )
     changeunit_call = mocked.requests[changeunit_key][0]
-    assert changeunit_call.kwargs["headers"]["X-Auth-Token"] == "intermediate-token"
+    assert changeunit_call.kwargs["headers"]["Authorization"] == "Bearer intermediate-token"
 
     retry_key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
     second_call = mocked.requests[retry_key][1]
-    assert second_call.kwargs["headers"]["X-Auth-Token"] == "fresh-token"
+    assert second_call.kwargs["headers"]["Authorization"] == "Bearer fresh-token"
 
 
 @pytest.mark.asyncio
@@ -236,7 +236,7 @@ async def test_proactively_refreshes_before_expiry_deadline(freezer, client_fact
 
     call_key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
     call = mocked.requests[call_key][0]
-    assert call.kwargs["headers"]["X-Auth-Token"] == "fresh-token"
+    assert call.kwargs["headers"]["Authorization"] == "Bearer fresh-token"
 
 
 @pytest.mark.asyncio
@@ -582,7 +582,7 @@ async def test_refresh_discovers_portal_id_via_unit_list_when_not_cached(
 
     unit_list_key = ("GET", URL("https://api.poschodoch.sk/api/Auth/UnitList/"))
     unit_list_call = mocked.requests[unit_list_key][0]
-    assert unit_list_call.kwargs["headers"]["X-Auth-Token"] == "intermediate-token"
+    assert unit_list_call.kwargs["headers"]["Authorization"] == "Bearer intermediate-token"
 
 
 @pytest.mark.asyncio
@@ -611,3 +611,42 @@ async def test_refresh_does_not_relookup_portal_id_once_cached(client_factory):
         await client._refresh()
 
     assert client._id_token == "final-token"
+
+
+@pytest.mark.asyncio
+async def test_activate_skips_auth_refresh_and_binds_a_fresh_login_token(
+    client_factory,
+):
+    """A refresh_token straight out of a Google login is rejected by
+    Auth/refresh (it must go through Auth/changeunit at least once first).
+    activate() must call UnitList + changeunit directly with the as-given
+    token, never touching Auth/refresh at all."""
+    client = client_factory(
+        id_token="fresh-login-token",
+        id_refresh_token="fresh-login-refresh-token",
+        portal_id=None,
+    )
+    with aioresponses() as mocked:
+        # no Auth/refresh mock: a call to it would raise ClientConnectionError
+        mocked.get(
+            "https://api.poschodoch.sk/api/Auth/UnitList/",
+            payload=[{"UnitId": 26715, "PortalId": 78159}],
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
+                "auth_token": "activated-token",
+                "refresh_token": "activated-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+
+        await client.activate()
+
+    assert client._id_token == "activated-token"
+    assert client._id_refresh_token == "activated-refresh-token"
+    assert client._portal_id == 78159
+
+    unit_list_key = ("GET", URL("https://api.poschodoch.sk/api/Auth/UnitList/"))
+    unit_list_call = mocked.requests[unit_list_key][0]
+    assert unit_list_call.kwargs["headers"]["Authorization"] == "Bearer fresh-login-token"

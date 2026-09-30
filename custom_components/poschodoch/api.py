@@ -157,7 +157,7 @@ class PoschodochApiClient:
 
     async def _raw_request(self, method: str, path: str, **kwargs):
         headers = kwargs.pop("headers", {})
-        headers["X-Auth-Token"] = self._id_token
+        headers["Authorization"] = f"Bearer {self._id_token}"
         async with self._session.request(
             method, f"{BASE_URL}{path}", headers=headers, **kwargs
         ) as resp:
@@ -204,6 +204,18 @@ class PoschodochApiClient:
         self._id_token = body["auth_token"]
         self._id_refresh_token = body["refresh_token"]
 
+        await self._activate_unit()
+
+    async def activate(self) -> None:
+        """Bind the current, freshly-provided token to a unit/portal.
+
+        Use this once, right after setup, for a token pair that has never
+        been used with this API before (e.g. one copied straight out of a
+        browser right after a Google login). Auth/refresh rejects a
+        refresh_token that has never been through Auth/changeunit, so the
+        very first activation must skip Auth/refresh and call
+        Auth/UnitList + Auth/changeunit directly with the as-given token.
+        """
         await self._activate_unit()
 
     async def _activate_unit(self) -> None:
