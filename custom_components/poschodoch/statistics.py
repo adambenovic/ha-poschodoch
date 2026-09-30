@@ -144,7 +144,7 @@ async def _sweep_backward(
         calls_made += 1
         hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
         if calls_made % 6 == 0:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Statistics backfill progress [%s]: checked %04d-%02d (%s), "
                 "%d calls made, %d months kept",
                 label,
@@ -165,7 +165,7 @@ async def _sweep_backward(
                 break
         year, month = _month_before(year, month)
 
-    _LOGGER.warning(
+    _LOGGER.debug(
         "Statistics backfill [%s]: finished sweep at %04d-%02d, %d months found in %d calls",
         label,
         year,
@@ -178,7 +178,7 @@ async def _sweep_backward(
         # Adjacent months' independent API calls can both include the same
         # boundary day — keep the last-seen value for any duplicate date
         # rather than passing duplicate timestamps into the statistics
-        # import (suspected cause of a silent, all-or-nothing failure).
+        # import.
         by_date = {e["date"]: e for e in entries}
         merged[key] = sorted(by_date.values(), key=lambda e: e["date"])
     return merged
@@ -209,7 +209,7 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         statistic_id = f"{DOMAIN}:{slug}"
         metadata = _build_metadata(statistic_id, name, unit)
         points = _build_statistics(entries, 0.0)
-        _LOGGER.warning(
+        _LOGGER.info(
             "Statistics backfill: submitting %d points for %s (%s..%s)",
             len(points),
             statistic_id,
@@ -226,7 +226,7 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
             statistic_id, f"Heating daily consumption - {room}", None
         )
         points = _build_statistics(entries, 0.0)
-        _LOGGER.warning(
+        _LOGGER.info(
             "Statistics backfill: submitting %d points for %s (%s..%s)",
             len(points),
             statistic_id,

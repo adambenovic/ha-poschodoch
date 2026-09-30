@@ -228,13 +228,39 @@ no new entities, existing sensors untouched.
   `stats_backfilled` flag persisted on the config entry), walks backward
   month by month calling `Flat/DailyConsumption?...&year=<yyyy>&month=<mm>`
   for both the water (`type=S`, yields cold+hot together) and heating
-  (`type=U`, yields all rooms together) series, until a month's data
-  doesn't actually belong to that month (checked defensively the same
-  way as the repair-fund fix, in case this endpoint ever exhibits the
-  same "echoes an unrelated period" quirk — not observed here, but out-
-  of-range months were confirmed live to correctly come back empty).
-  Runs as an entry-scoped background task so it never blocks or delays
-  startup even if it takes minutes to walk years of history.
+  (`type=U`, yields all rooms together) series, until a month no longer
+  counts as a "hit". Runs as an entry-scoped background task so it never
+  blocks or delays startup even if it takes minutes to walk years of
+  history.
+- **What actually counts as a "hit" (several false starts, corrected
+  live)**: a date match alone isn't enough. For sufficiently old
+  periods the API returns *correctly-dated placeholder entries with
+  `Consumption` always null* — the date scaffolding exists for years
+  before any usable metered data does. An earlier version only checked
+  the date, which walked the sweep through decades of real-looking but
+  entirely unusable null months (300+ calls) before the "any date
+  matches" condition finally failed — and even then, `_build_statistics`
+  silently filtered every null-consumption entry back out, so all that
+  extra walking produced no more usable data than a much shorter sweep
+  would have. A month now only counts as a hit if at least one entry
+  has both a matching date *and* non-null consumption, so the sweep
+  stops at the true edge of usable history, not the edge of the date
+  scaffolding underneath it. Also required tolerating a short run of
+  misses (not stopping at the very first one — an isolated bad/empty
+  response was observed mid-history) and tolerating per-month fetch
+  failures (a sufficiently old month can return a non-JSON body,
+  confirmed live) as misses rather than letting either abort the whole
+  sweep and lose everything already found.
+- **A debugging trap worth naming**: mid-investigation, `poschodoch:*`
+  statistic IDs with no `unit_of_measurement` (the heating series)
+  appeared to have zero data via `recorder/statistics_during_period`
+  with a bucketed `period`, even once the real bug above was fixed and
+  the data was genuinely written. Querying the exact same statistic_id
+  via `get_last_statistics` (unbucketed) showed real data all along —
+  the bucketed period-query path, not the integration, was the thing
+  misbehaving for unitless statistics. Lesson: when a live check
+  disagrees with the code's own logic and tests, verify via the
+  simplest possible read path before concluding the write is broken.
 - **Ongoing sync**: every regular coordinator poll re-uses the
   current-period data it already fetched (no extra API calls) and
   imports any days not yet present in long-term stats, continuing the

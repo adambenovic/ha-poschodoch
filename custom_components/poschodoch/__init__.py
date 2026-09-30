@@ -64,27 +64,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 exc_info=True,
             )
 
-        # TEMPORARY: verify via our own exact code path (bypassing any
-        # websocket-API-specific query quirk) whether heating data really
-        # landed or not.
-        from homeassistant.components.recorder.statistics import get_last_statistics
-
-        for stat_id in (
-            "poschodoch:cold_water_daily",
-            "poschodoch:hot_water_daily",
-            "poschodoch:heating_daily_spalna",
-            "poschodoch:heating_daily_kuchyna",
-            "poschodoch:heating_daily_detska_izba",
-            "poschodoch:heating_daily_obyvacia_izba",
-        ):
-            try:
-                result = await hass.async_add_executor_job(
-                    get_last_statistics, hass, 3, stat_id, True, {"sum", "state", "start"}
-                )
-                _LOGGER.warning("DIAGNOSTIC get_last_statistics(%s) = %s", stat_id, result)
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.warning("DIAGNOSTIC get_last_statistics(%s) FAILED", stat_id, exc_info=True)
-
     entry.async_create_background_task(
         hass, _run_backfill(), "poschodoch_stats_backfill"
     )
