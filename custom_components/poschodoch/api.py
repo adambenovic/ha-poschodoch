@@ -67,6 +67,10 @@ class PoschodochApiClient:
             return self._menu_map
 
         entries = await self.request("GET", "Dashboard/Menu")
+        _LOGGER.warning(
+            "DIAGNOSTIC Dashboard/Menu RAW: %s",
+            json.dumps(entries, ensure_ascii=False),
+        )
         self._menu_map = {entry["MenuCode"]: entry["MenuId"] for entry in entries}
         self._menu_map_fetched_at = now
         return self._menu_map
@@ -76,6 +80,13 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         body = await self.request(
             "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "S"}
+        )
+        dates = sorted(e["Date"] for e in body["Consumption"])
+        _LOGGER.warning(
+            "DIAGNOSTIC DailyConsumption type=S: %d entries, range %s..%s",
+            len(dates),
+            dates[0] if dates else None,
+            dates[-1] if dates else None,
         )
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
@@ -89,6 +100,13 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         body = await self.request(
             "GET", "Flat/DailyConsumption", params={"menuId": menu_id, "type": "U"}
+        )
+        dates = sorted(e["Date"] for e in body["Consumption"])
+        _LOGGER.warning(
+            "DIAGNOSTIC DailyConsumption type=U: %d entries, range %s..%s",
+            len(dates),
+            dates[0] if dates else None,
+            dates[-1] if dates else None,
         )
         by_room: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
@@ -190,6 +208,11 @@ class PoschodochApiClient:
     async def _fetch_repair_fund_year(self, menu_id: int, year: int) -> list[dict]:
         body = await self.request(
             "GET", "Object/RepairFund", params={"menuId": menu_id, "year": year}
+        )
+        _LOGGER.warning(
+            "DIAGNOSTIC RepairFund RAW year=%s: %s",
+            year,
+            json.dumps(body, ensure_ascii=False),
         )
         return [
             {
