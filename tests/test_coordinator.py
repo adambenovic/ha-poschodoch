@@ -136,3 +136,35 @@ async def test_coordinator_survives_statistics_sync_failure(hass):
 
     assert coordinator.last_exception is None
     assert coordinator.data["account"]["due_balance"] == 195.60
+
+
+@pytest.mark.asyncio
+async def test_coordinator_exposes_rolling_averages(hass):
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    with patch(
+        "custom_components.poschodoch.coordinator.statistics.get_rolling_averages",
+        new=AsyncMock(return_value={"S": 10.0, "T": 2.0, "Kuchyňa": 1.5}),
+    ) as mock_averages:
+        await coordinator.async_refresh()
+
+    mock_averages.assert_called_once_with(hass, ["Kuchyňa"])
+    assert coordinator.data["rolling_averages"] == {"S": 10.0, "T": 2.0, "Kuchyňa": 1.5}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_survives_rolling_averages_failure(hass):
+    """Same resilience contract as the statistics sync — a failure here
+    must never take down the live sensors."""
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    with patch(
+        "custom_components.poschodoch.coordinator.statistics.get_rolling_averages",
+        new=AsyncMock(side_effect=RuntimeError("recorder not ready")),
+    ):
+        await coordinator.async_refresh()
+
+    assert coordinator.last_exception is None
+    assert coordinator.data["rolling_averages"] == {}

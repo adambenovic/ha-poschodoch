@@ -62,6 +62,18 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
                 exc_info=True,
             )
 
+        try:
+            rolling_averages = await statistics.get_rolling_averages(
+                self.hass, list(heating_daily_consumption)
+            )
+        except Exception:  # pylint: disable=broad-except
+            # Supplementary, same contract as the statistics sync above.
+            _LOGGER.warning(
+                "Failed to compute rolling averages for poschodoch.sk data",
+                exc_info=True,
+            )
+            rolling_averages = {}
+
         return {
             "daily_consumption": daily_consumption,
             "heating_daily_consumption": heating_daily_consumption,
@@ -69,4 +81,5 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
             "meter_readings": meter_readings,
             "account": account,
             "repair_fund": repair_fund,
+            "rolling_averages": rolling_averages,
         }

@@ -10,13 +10,14 @@ separate from the existing sensors, which are untouched.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
+    statistic_during_period,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
@@ -42,6 +43,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_BACKFILL_MONTHS = 700
 MAX_CONSECUTIVE_MISSES = 3
+ROLLING_AVERAGE_DAYS = 30
 
 WATER_SERIES = {
     "S": ("cold_water_daily", "Cold water daily consumption", "L"),
@@ -305,3 +307,40 @@ async def async_sync_latest(
                 None,
                 entries,
             )
+
+
+async def get_rolling_average(
+    hass: HomeAssistant, statistic_id: str, days: int = ROLLING_AVERAGE_DAYS
+) -> float | None:
+    """Average per day over the trailing window, computed from the
+    recorder's own period-total ("change") rather than "mean" — this is a
+    has_sum-only series (no per-point mean stored), and "mean" reads back
+    as null for that kind of series. statistic_during_period does
+    blocking database I/O, same as get_last_statistics — must go through
+    the executor."""
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    result = await hass.async_add_executor_job(
+        statistic_during_period, hass, start, now, statistic_id, {"change"}, None
+    )
+    change = result.get("change")
+    if change is None:
+        return None
+    return change / days
+
+
+async def get_rolling_averages(
+    hass: HomeAssistant, heating_rooms: list[str], days: int = ROLLING_AVERAGE_DAYS
+) -> dict[str, float | None]:
+    """Rolling daily averages for every water and heating series, keyed
+    the same way the coordinator's own daily_consumption/
+    heating_daily_consumption dicts are ("S"/"T" for water, room name for
+    heating) so sensors can look themselves up directly."""
+    averages: dict[str, float | None] = {}
+    for code, (slug, _name, _unit) in WATER_SERIES.items():
+        averages[code] = await get_rolling_average(hass, f"{DOMAIN}:{slug}", days)
+    for room in heating_rooms:
+        averages[room] = await get_rolling_average(
+            hass, f"{DOMAIN}:heating_daily_{slugify(room)}", days
+        )
+    return averages

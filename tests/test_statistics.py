@@ -399,3 +399,75 @@ async def test_async_sync_latest_starts_from_zero_when_no_prior_statistics(hass)
     _, _, points = mock_add_stats.call_args.args
     points = list(points)
     assert points[0]["sum"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_get_rolling_average_divides_period_change_by_days(hass):
+    """Long-term stats only store state+sum (no per-point mean, since this
+    is a has_sum-only series) — confirmed live that querying "mean"
+    returns null for a series like ours. "change" (the recorder's own
+    period-total computation) divided by the window length is the
+    correct way to get a genuine average-per-day figure."""
+
+    def fake_statistic_during_period(hass_, start, end, statistic_id, types, units):
+        assert types == {"change"}
+        assert (end - start).days == 30
+        return {"change": 300.0}
+
+    with patch(
+        "custom_components.poschodoch.statistics.statistic_during_period",
+        side_effect=fake_statistic_during_period,
+    ):
+        result = await stats.get_rolling_average(hass, "poschodoch:cold_water_daily")
+
+    assert result == pytest.approx(10.0)
+
+
+@pytest.mark.asyncio
+async def test_get_rolling_average_runs_via_executor(hass):
+    """statistic_during_period does blocking database I/O, same as
+    get_last_statistics — must never be called directly from the event
+    loop."""
+
+    async def fake_executor_job(func, *args):
+        return func(*args)
+
+    with patch(
+        "custom_components.poschodoch.statistics.statistic_during_period",
+        return_value={"change": 30.0},
+    ) as mock_stat, patch.object(
+        hass, "async_add_executor_job", side_effect=fake_executor_job
+    ) as mock_executor_job:
+        await stats.get_rolling_average(hass, "poschodoch:cold_water_daily")
+
+    mock_executor_job.assert_called_once()
+    assert mock_executor_job.call_args.args[0] is mock_stat
+
+
+@pytest.mark.asyncio
+async def test_get_rolling_average_returns_none_when_change_is_none(hass):
+    with patch(
+        "custom_components.poschodoch.statistics.statistic_during_period",
+        return_value={"change": None},
+    ):
+        result = await stats.get_rolling_average(hass, "poschodoch:cold_water_daily")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_rolling_averages_covers_water_and_all_heating_rooms(hass):
+    async def fake_get_rolling_average(hass_, statistic_id, days=30):
+        return {
+            "poschodoch:cold_water_daily": 10.0,
+            "poschodoch:hot_water_daily": 2.0,
+            "poschodoch:heating_daily_kuchyna": 1.5,
+        }.get(statistic_id)
+
+    with patch(
+        "custom_components.poschodoch.statistics.get_rolling_average",
+        side_effect=fake_get_rolling_average,
+    ):
+        result = await stats.get_rolling_averages(hass, ["Kuchyňa"])
+
+    assert result == {"S": 10.0, "T": 2.0, "Kuchyňa": 1.5}

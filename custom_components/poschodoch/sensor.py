@@ -68,7 +68,12 @@ class DailyWaterSensor(_PoschodochSensorBase):
 
     @property
     def extra_state_attributes(self):
-        return {"date": self._latest["date"]}
+        return {
+            "date": self._latest["date"],
+            "average_last_30_days": self.coordinator.data["rolling_averages"].get(
+                self._code
+            ),
+        }
 
 
 class HeatingRoomDailySensor(_PoschodochSensorBase):
@@ -92,7 +97,12 @@ class HeatingRoomDailySensor(_PoschodochSensorBase):
 
     @property
     def extra_state_attributes(self):
-        return {"date": self._latest["date"]}
+        return {
+            "date": self._latest["date"],
+            "average_last_30_days": self.coordinator.data["rolling_averages"].get(
+                self._room
+            ),
+        }
 
 
 class AccountBalanceSensor(_PoschodochSensorBase):

@@ -277,6 +277,32 @@ no new entities, existing sensors untouched.
   sync) — long-term statistics are supplementary and must never affect
   the integration's own loaded state or the live sensors.
 
+### Rolling 30-day averages
+
+Exposed as an `average_last_30_days` attribute on the existing daily
+water/heating sensors (not new entities) — computed every poll via
+`get_rolling_average()`/`get_rolling_averages()` in `statistics.py` and
+stored in `coordinator.data["rolling_averages"]`, keyed the same way as
+`daily_consumption`/`heating_daily_consumption` ("S"/"T" for water, room
+name for heating).
+
+**Why not `stat_type: "mean"`:** the recorder's `mean`/`max`/`min`
+aggregates are computed from per-point `mean`/`max`/`min` *columns*,
+which this integration never populates (only `state` and `sum`, since
+`mean_type=NONE`/`has_mean=False` was set deliberately — this is a
+cumulative-sum series, not a sampled one). Confirmed via the recorder's
+own source: querying "mean" for a has_sum-only series just reads back
+null. `change` (the built-in period-total computation: newest sum minus
+oldest sum in the window) divided by the window length in days is the
+correct way to get a genuine average-per-day figure — this is the same
+computation the "statistic" dashboard card uses via
+`recorder/statistic_during_period`, just done in Python
+(`statistic_during_period`, singular) via
+`hass.async_add_executor_job` since it's the same kind of blocking DB
+call as `get_last_statistics`. Same resilience contract as the
+statistics sync: a failure is caught in the coordinator and falls back
+to `{}`, never breaking the live sensors.
+
 ## Error handling
 
 - `401` on any call → one `Auth/Refresh` attempt → retry once → if

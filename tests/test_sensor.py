@@ -35,6 +35,7 @@ def make_coordinator():
             "last_payment_date": "2026-09-02",
         },
         "repair_fund": {"balance": 109.28, "year": 2026, "recent_entries": []},
+        "rolling_averages": {"S": 199.5, "T": 35.2, "Kuchyňa": 1.2, "Spálňa": 0.1},
     }
     return coordinator
 
@@ -53,11 +54,30 @@ def test_daily_water_sensor_reports_latest_day():
     assert sensor.extra_state_attributes["date"] == "2026-09-24"
 
 
+def test_daily_water_sensor_reports_rolling_average():
+    coordinator = make_coordinator()
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.extra_state_attributes["average_last_30_days"] == 199.5
+
+
+def test_daily_water_sensor_rolling_average_none_when_unavailable():
+    coordinator = make_coordinator()
+    coordinator.data["rolling_averages"] = {}
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.extra_state_attributes["average_last_30_days"] is None
+
+
 def test_heating_room_sensor_reports_latest_day():
     coordinator = make_coordinator()
     sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
     assert sensor.native_value == 1.5
     assert sensor.extra_state_attributes["date"] == "2026-09-24"
+
+
+def test_heating_room_sensor_reports_rolling_average():
+    coordinator = make_coordinator()
+    sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
+    assert sensor.extra_state_attributes["average_last_30_days"] == 1.2
 
 
 def test_daily_water_sensor_skips_trailing_null_reading():
