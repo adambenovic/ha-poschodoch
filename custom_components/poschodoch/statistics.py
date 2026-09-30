@@ -135,16 +135,26 @@ async def _sweep_backward(
         calls_made += 1
         hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
         if hit and year < 2015:
-            sample_dates = sorted(
-                {e["date"] for entries in by_series.values() for e in entries}
+            sample = [
+                (e["date"], e["consumption"])
+                for entries in by_series.values()
+                for e in entries
+            ][:5]
+            null_count = sum(
+                1
+                for entries in by_series.values()
+                for e in entries
+                if e["consumption"] is None
             )
+            total_count = sum(len(v) for v in by_series.values())
             _LOGGER.warning(
-                "DIAGNOSTIC [%s] %04d-%02d hit, %d total entries, unique dates: %s",
+                "DIAGNOSTIC [%s] %04d-%02d hit, %d total entries, %d null consumption, sample: %s",
                 label,
                 year,
                 month,
-                sum(len(v) for v in by_series.values()),
-                sample_dates[:5] + ["..."] + sample_dates[-5:] if len(sample_dates) > 10 else sample_dates,
+                total_count,
+                null_count,
+                sample,
             )
         if calls_made % 6 == 0:
             _LOGGER.warning(
