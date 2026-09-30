@@ -202,8 +202,8 @@ class PoschodochApiClient:
         for offset in range(1, REPAIR_FUND_LOOKBACK_YEARS_CAP + 1):
             year = current_year - offset
             entries = await self._fetch_repair_fund_year(menu_id, year)
-            _LOGGER.debug(
-                "RepairFund year=%s: %d entries, sample=%s",
+            _LOGGER.warning(
+                "DIAGNOSTIC RepairFund year=%s: %d entries, sample=%s",
                 year,
                 len(entries),
                 entries[:2],
