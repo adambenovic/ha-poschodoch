@@ -1,0 +1,252 @@
+# Example Lovelace dashboard view for the poschodoch.sk integration.
+#
+# This is the "sections" view type (Settings -> Dashboards -> Add Dashboard,
+# or add a new view to an existing dashboard, then switch to YAML mode for
+# the view and paste this in). It covers everything the integration
+# provides: account/repair fund balance, water consumption (daily/weekly/
+# monthly, plus a 30-day rolling average), and heating consumption per room.
+#
+# Heating rooms are account-specific — the two shown below ("Living room",
+# "Bedroom") are placeholders. Replace them with your own rooms: each one
+# needs its sensor entity_id (poschodoch_heating_<slug of the room name>)
+# in the "Latest daily readings" card, and its statistic_id
+# (poschodoch:heating_daily_<slug of the room name>) in each
+# statistics-graph card's entities list. Check Settings -> Devices &
+# Services -> poschodoch.sk -> Entities for your actual room entity_ids.
+title: poschodoch.sk
+path: poschodoch
+icon: mdi:home-city-outline
+type: sections
+max_columns: 3
+badges:
+  - type: entity
+    entity: sensor.account_balance
+    name: Balance
+  - type: entity
+    entity: sensor.repair_fund_balance
+    name: Repair fund
+sections:
+  - type: grid
+    cards:
+      - type: tile
+        entity: sensor.account_balance
+        name: Account balance
+        icon: mdi:cash
+        grid_options:
+          columns: 6
+          rows: 2
+      - type: tile
+        entity: sensor.repair_fund_balance
+        name: Repair fund
+        icon: mdi:piggy-bank-outline
+        grid_options:
+          columns: 6
+          rows: 2
+      - type: entities
+        title: Account details
+        entities:
+          - type: attribute
+            entity: sensor.account_balance
+            name: Due date
+            attribute: due_date
+          - type: attribute
+            entity: sensor.account_balance
+            name: Last payment
+            attribute: last_payment_amount
+            suffix: " €"
+          - type: attribute
+            entity: sensor.account_balance
+            name: Last payment date
+            attribute: last_payment_date
+          - type: attribute
+            entity: sensor.repair_fund_balance
+            name: Tracked since
+            attribute: since_year
+        grid_options:
+          columns: 12
+          rows: 5
+  - type: grid
+    cards:
+      - type: gauge
+        entity: sensor.cold_water_status
+        name: Cold water vs last year
+        min: -50
+        max: 50
+        needle: true
+        severity:
+          green: -50
+          yellow: 0
+          red: 20
+        grid_options:
+          columns: 4
+          rows: 3
+      - type: gauge
+        entity: sensor.hot_water_status
+        name: Hot water vs last year
+        min: -50
+        max: 50
+        needle: true
+        severity:
+          green: -50
+          yellow: 0
+          red: 20
+        grid_options:
+          columns: 4
+          rows: 3
+      - type: entities
+        title: Latest daily readings
+        entities:
+          - entity: sensor.cold_water_daily
+            name: Cold water
+          - entity: sensor.hot_water_daily
+            name: Hot water
+          - type: attribute
+            entity: sensor.cold_water_daily
+            name: Cold water (30d avg)
+            attribute: average_last_30_days
+            suffix: " L/day"
+          - type: attribute
+            entity: sensor.hot_water_daily
+            name: Hot water (30d avg)
+            attribute: average_last_30_days
+            suffix: " L/day"
+        grid_options:
+          columns: 4
+          rows: 5
+      - type: statistics-graph
+        title: Daily water consumption
+        entities:
+          - poschodoch:cold_water_daily
+          - poschodoch:hot_water_daily
+        stat_types:
+          - state
+        period: day
+        days_to_show: 120
+        chart_type: bar
+        grid_options:
+          columns: 12
+          rows: 5
+      - type: statistic
+        entity: poschodoch:cold_water_daily
+        name: Cold water this month
+        stat_type: change
+        period:
+          calendar:
+            period: month
+            offset: 0
+        icon: mdi:water
+        grid_options:
+          columns: 3
+          rows: 2
+      - type: statistic
+        entity: poschodoch:hot_water_daily
+        name: Hot water this month
+        stat_type: change
+        period:
+          calendar:
+            period: month
+            offset: 0
+        icon: mdi:water-thermometer
+        grid_options:
+          columns: 3
+          rows: 2
+      - type: statistics-graph
+        title: Weekly water consumption
+        entities:
+          - poschodoch:cold_water_daily
+          - poschodoch:hot_water_daily
+        stat_types:
+          - change
+        period: week
+        days_to_show: 180
+        chart_type: bar
+        grid_options:
+          columns: 6
+          rows: 5
+      - type: statistics-graph
+        title: Monthly water consumption
+        entities:
+          - poschodoch:cold_water_daily
+          - poschodoch:hot_water_daily
+        stat_types:
+          - change
+        period: month
+        days_to_show: 1200
+        chart_type: bar
+        grid_options:
+          columns: 6
+          rows: 5
+  - type: grid
+    cards:
+      - type: gauge
+        entity: sensor.heating_status
+        name: Heating vs last year
+        min: -50
+        max: 50
+        needle: true
+        severity:
+          green: -50
+          yellow: 0
+          red: 20
+        grid_options:
+          columns: 4
+          rows: 3
+      # One row + one attribute row per heating room you have — add/remove
+      # pairs to match your account (see the room-entity note at the top).
+      - type: entities
+        title: Latest daily readings
+        entities:
+          - entity: sensor.heating_living_room
+            name: Living room
+          - entity: sensor.heating_bedroom
+            name: Bedroom
+          - type: attribute
+            entity: sensor.heating_living_room
+            name: Living room (30d avg)
+            attribute: average_last_30_days
+          - type: attribute
+            entity: sensor.heating_bedroom
+            name: Bedroom (30d avg)
+            attribute: average_last_30_days
+        grid_options:
+          columns: 8
+          rows: 6
+      - type: statistics-graph
+        title: Daily heating consumption by room
+        entities:
+          - poschodoch:heating_daily_living_room
+          - poschodoch:heating_daily_bedroom
+        stat_types:
+          - state
+        period: day
+        days_to_show: 120
+        chart_type: bar
+        grid_options:
+          columns: 12
+          rows: 5
+      - type: statistics-graph
+        title: Weekly heating consumption by room
+        entities:
+          - poschodoch:heating_daily_living_room
+          - poschodoch:heating_daily_bedroom
+        stat_types:
+          - change
+        period: week
+        days_to_show: 180
+        chart_type: bar
+        grid_options:
+          columns: 6
+          rows: 5
+      - type: statistics-graph
+        title: Monthly heating consumption by room
+        entities:
+          - poschodoch:heating_daily_living_room
+          - poschodoch:heating_daily_bedroom
+        stat_types:
+          - change
+        period: month
+        days_to_show: 1200
+        chart_type: bar
+        grid_options:
+          columns: 6
+          rows: 5

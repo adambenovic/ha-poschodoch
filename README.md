@@ -50,18 +50,67 @@ pair was rejected/revoked), repeat these same steps with a fresh pair.
 
 ## Sensors
 
-| Sensor | What it shows |
-|---|---|
-| Cold water status | % vs. last year's consumption to date |
-| Hot water status | % vs. last year's consumption to date |
-| Heating status | % vs. last year's consumption to date |
-| Cold water daily | Most recent day's cold water use (L) |
-| Hot water daily | Most recent day's hot water use (L) |
-| Heating — `<room>` | One sensor per room's heat-cost allocator, created automatically from your building's actual meters |
-| Account balance | Current balance due/credit (EUR) |
-| Repair fund balance | Current year's repair fund balance (EUR) |
+| Sensor | What it shows | Notable attributes |
+|---|---|---|
+| Cold water status | % vs. last year's consumption to date | `actual_consumption`, `diff_consumption` |
+| Hot water status | % vs. last year's consumption to date | `actual_consumption`, `diff_consumption` |
+| Heating status | % vs. last year's consumption to date | `actual_consumption`, `diff_consumption` |
+| Cold water daily | Most recent day's cold water use (L) | `date`, `average_last_30_days` |
+| Hot water daily | Most recent day's hot water use (L) | `date`, `average_last_30_days` |
+| Heating — `<room>` | One sensor per room's heat-cost allocator, created automatically from your building's actual meters | `date`, `average_last_30_days` |
+| Account balance | Current balance due/credit (EUR) | `due_date`, `last_payment_amount`, `last_payment_date` |
+| Repair fund balance | The fund's lifetime balance (EUR), not scoped to the current year | `since_year`, `recent_entries` |
 
-Data refreshes hourly.
+Data refreshes hourly. `average_last_30_days` is a genuine trailing
+30-day daily average (see below), not a single day's reading.
+
+## Long-term statistics
+
+Beyond the sensors above (which only ever show the latest reading),
+the integration imports your full available consumption history into
+Home Assistant's own long-term statistics store — the same place the
+Energy dashboard and Settings → Statistics graphs read from. This
+happens automatically and needs no configuration:
+
+- **One-time backfill.** On first setup, a background task walks
+  backward through your account's history (as far back as
+  poschodoch.sk has real metered data, typically mid-2023 onward) and
+  imports it. This can take a while on a large account since it's one
+  request per month of history, but it doesn't block the integration
+  from loading — sensors work immediately, the backfill just fills in
+  behind them.
+- **Ongoing sync.** Every hourly poll imports whatever new days aren't
+  in long-term statistics yet, so the history stays current without
+  repeating the full backfill.
+
+The imported statistics are separate entities from the sensors, named
+`poschodoch:cold_water_daily`, `poschodoch:hot_water_daily`, and
+`poschodoch:heating_daily_<room>` — pick them via "Show more" /
+"statistic" card types in dashboards rather than the regular entity
+picker, since they're not regular sensor entities.
+
+### Rolling 30-day averages
+
+Each water/heating sensor's `average_last_30_days` attribute is
+computed server-side (via Home Assistant's own statistics backend) as
+the trailing 30-day total divided by 30 — a genuine average-per-day
+figure, not a snapshot of the average of the last 30 individual
+readings. It depends on the long-term statistics above already having
+enough history, so it may read as unavailable for the first day or two
+after initial setup.
+
+## Dashboard example
+
+[`examples/dashboard.yaml`](examples/dashboard.yaml) is a full example
+Lovelace view covering everything above: account/repair fund balance,
+water consumption (daily/weekly/monthly graphs plus the 30-day
+average), and heating consumption per room. To use it:
+
+1. Add a new view to a dashboard, switch that view to YAML mode, and
+   paste the file's contents in.
+2. Update the heating room entities/statistics to match your own
+   account (see the comment at the top of the file) — room names are
+   account-specific, so the example uses placeholders.
 
 ## Development
 
