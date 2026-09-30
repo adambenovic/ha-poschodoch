@@ -15,7 +15,6 @@ from .const import (
     CONF_ID_REFRESH_TOKEN,
     CONF_ID_TOKEN,
     CONF_REFRESH_AFTER,
-    CONF_STATS_BACKFILLED,
     CONF_TOKEN_EXPIRES_AT,
     DOMAIN,
 )
@@ -65,13 +64,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 exc_info=True,
             )
 
-    # TEMPORARY: the previous backfill completed (flag set true) but its
-    # data silently never landed in the recorder (suspected duplicate-
-    # timestamp collision from adjacent-month boundary overlap, now
-    # fixed). Force one more clean re-backfill to confirm. Remove after.
-    hass.config_entries.async_update_entry(
-        entry, data={**entry.data, CONF_STATS_BACKFILLED: False}
-    )
+        # TEMPORARY: verify via our own exact code path (bypassing any
+        # websocket-API-specific query quirk) whether heating data really
+        # landed or not.
+        from homeassistant.components.recorder.statistics import get_last_statistics
+
+        for stat_id in ("poschodoch:heating_daily_kuchyna", "poschodoch:hot_water_daily"):
+            try:
+                result = await hass.async_add_executor_job(
+                    get_last_statistics, hass, 3, stat_id, True, {"sum", "state", "start"}
+                )
+                _LOGGER.warning("DIAGNOSTIC get_last_statistics(%s) = %s", stat_id, result)
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.warning("DIAGNOSTIC get_last_statistics(%s) FAILED", stat_id, exc_info=True)
 
     entry.async_create_background_task(
         hass, _run_backfill(), "poschodoch_stats_backfill"
