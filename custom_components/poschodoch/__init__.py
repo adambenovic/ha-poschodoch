@@ -29,13 +29,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up poschodoch.sk from a config entry."""
 
     async def on_tokens_updated(id_token: str, id_refresh_token: str) -> None:
+        # client.token_state already reflects the rotation that just
+        # happened (set in _activate_unit right before calling back) —
+        # persist the expiry fields too, not just the tokens, or a restart
+        # right after a mid-session rotation starts back up with the stale
+        # timestamps from whenever the entry was first created.
         hass.config_entries.async_update_entry(
-            entry,
-            data={
-                **entry.data,
-                CONF_ID_TOKEN: id_token,
-                CONF_ID_REFRESH_TOKEN: id_refresh_token,
-            },
+            entry, data={**entry.data, **client.token_state}
         )
 
     client = PoschodochApiClient(
