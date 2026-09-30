@@ -97,6 +97,7 @@ async def _sweep_backward(
     start_year: int,
     start_month: int,
     max_months: int = MAX_BACKFILL_MONTHS,
+    label: str = "",
 ) -> dict[str, list[dict]]:
     """Walk backward month by month, merging each series until several
     consecutive months' data no longer actually belongs to that month
@@ -113,32 +114,41 @@ async def _sweep_backward(
     merged: dict[str, list[dict]] = {}
     year, month = start_year, start_month
     months_walked = 0
+    calls_made = 0
     consecutive_misses = 0
     for _ in range(max_months):
         by_series = await fetch_month(year, month)
-        if any(_entries_belong_to_month(entries, year, month) for entries in by_series.values()):
+        calls_made += 1
+        hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
+        if calls_made % 6 == 0:
+            _LOGGER.warning(
+                "Statistics backfill progress [%s]: checked %04d-%02d (%s), "
+                "%d calls made, %d months kept",
+                label,
+                year,
+                month,
+                "hit" if hit else "miss",
+                calls_made,
+                months_walked,
+            )
+        if hit:
             consecutive_misses = 0
             for key, entries in by_series.items():
                 merged.setdefault(key, []).extend(entries)
             months_walked += 1
-            if months_walked % 12 == 0:
-                _LOGGER.debug(
-                    "Statistics backfill: walked back to %04d-%02d (%d months so far)",
-                    year,
-                    month,
-                    months_walked,
-                )
         else:
             consecutive_misses += 1
             if consecutive_misses >= MAX_CONSECUTIVE_MISSES:
                 break
         year, month = _month_before(year, month)
 
-    _LOGGER.debug(
-        "Statistics backfill: finished sweep at %04d-%02d, %d months found",
+    _LOGGER.warning(
+        "Statistics backfill [%s]: finished sweep at %04d-%02d, %d months found in %d calls",
+        label,
         year,
         month,
         months_walked,
+        calls_made,
     )
 
     for entries in merged.values():
@@ -154,9 +164,16 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
 
     now = datetime.now(timezone.utc)
 
+    # Sequential, not parallel: both sweeps share this same client, whose
+    # token-refresh logic isn't lock-protected — concurrent sweeps could
+    # race and rotate the token out from under each other.
     water_history = await _sweep_backward(
-        client.get_daily_consumption, now.year, now.month
+        client.get_daily_consumption, now.year, now.month, label="water"
     )
+    heating_history = await _sweep_backward(
+        client.get_heating_daily_consumption, now.year, now.month, label="heating"
+    )
+
     for code, (slug, name, unit) in WATER_SERIES.items():
         entries = water_history.get(code, [])
         if not entries:
@@ -165,9 +182,6 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         metadata = _build_metadata(statistic_id, name, unit)
         async_add_external_statistics(hass, metadata, _build_statistics(entries, 0.0))
 
-    heating_history = await _sweep_backward(
-        client.get_heating_daily_consumption, now.year, now.month
-    )
     for room, entries in heating_history.items():
         if not entries:
             continue
