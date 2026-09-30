@@ -34,6 +34,7 @@ except ImportError:
 _LOGGER = logging.getLogger(__name__)
 
 MAX_BACKFILL_MONTHS = 700
+MAX_CONSECUTIVE_MISSES = 3
 
 WATER_SERIES = {
     "S": ("cold_water_daily", "Cold water daily consumption", "L"),
@@ -88,27 +89,40 @@ async def _sweep_backward(
     start_month: int,
     max_months: int = MAX_BACKFILL_MONTHS,
 ) -> dict[str, list[dict]]:
-    """Walk backward month by month, merging each series until a month's
-    data no longer actually belongs to that month (either genuinely empty,
-    or — as seen with Object/RepairFund — the server echoing back an
-    unrelated period instead)."""
+    """Walk backward month by month, merging each series until several
+    consecutive months' data no longer actually belongs to that month
+    (either genuinely empty, or — as seen with Object/RepairFund — the
+    server echoing back an unrelated period instead).
+
+    Confirmed live: stopping at the very first miss is too fragile — a
+    real account showed one isolated bad month (cause unconfirmed, maybe
+    a transient backend hiccup) right in the middle of years of otherwise
+    real history, and a single-miss stop silently truncated everything
+    before it. Tolerating a short run of misses avoids that without
+    materially risking a false continuation past the genuine start,
+    since real "no more history" shows up as a long run, not one month."""
     merged: dict[str, list[dict]] = {}
     year, month = start_year, start_month
     months_walked = 0
+    consecutive_misses = 0
     for _ in range(max_months):
         by_series = await fetch_month(year, month)
-        if not any(_entries_belong_to_month(entries, year, month) for entries in by_series.values()):
-            break
-        for key, entries in by_series.items():
-            merged.setdefault(key, []).extend(entries)
-        months_walked += 1
-        if months_walked % 12 == 0:
-            _LOGGER.debug(
-                "Statistics backfill: walked back to %04d-%02d (%d months so far)",
-                year,
-                month,
-                months_walked,
-            )
+        if any(_entries_belong_to_month(entries, year, month) for entries in by_series.values()):
+            consecutive_misses = 0
+            for key, entries in by_series.items():
+                merged.setdefault(key, []).extend(entries)
+            months_walked += 1
+            if months_walked % 12 == 0:
+                _LOGGER.debug(
+                    "Statistics backfill: walked back to %04d-%02d (%d months so far)",
+                    year,
+                    month,
+                    months_walked,
+                )
+        else:
+            consecutive_misses += 1
+            if consecutive_misses >= MAX_CONSECUTIVE_MISSES:
+                break
         year, month = _month_before(year, month)
 
     _LOGGER.debug(

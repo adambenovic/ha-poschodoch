@@ -76,11 +76,18 @@ def test_build_statistics_skips_null_consumption_days():
 
 
 @pytest.mark.asyncio
-async def test_sweep_backward_merges_months_until_empty():
+async def test_sweep_backward_merges_months_until_consecutive_misses():
+    """Confirmed live: a real account's history can have an isolated
+    flaky/empty month in the middle of otherwise-real data (cause
+    unconfirmed — possibly a transient backend hiccup) — stopping at the
+    very first miss silently truncated years of real history. Requires
+    several misses in a row before concluding history has ended."""
     responses = {
         (2026, 9): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
         (2026, 8): {"S": [{"date": "2026-08-01", "consumption": 2.0}]},
         (2026, 7): {"S": []},
+        (2026, 6): {"S": []},
+        (2026, 5): {"S": []},
     }
 
     async def fetch_month(year, month):
@@ -92,10 +99,12 @@ async def test_sweep_backward_merges_months_until_empty():
 
 
 @pytest.mark.asyncio
-async def test_sweep_backward_stops_when_month_doesnt_belong():
+async def test_sweep_backward_stops_after_consecutive_mismatched_months():
     responses = {
         (2026, 9): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
         (2026, 8): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
+        (2026, 7): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
+        (2026, 6): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
     }
 
     async def fetch_month(year, month):
@@ -104,6 +113,32 @@ async def test_sweep_backward_stops_when_month_doesnt_belong():
     result = await stats._sweep_backward(fetch_month, 2026, 9)
 
     assert [e["date"] for e in result["S"]] == ["2026-09-01"]
+
+
+@pytest.mark.asyncio
+async def test_sweep_backward_tolerates_an_isolated_miss():
+    """Regression test for the live bug: one bad month in the middle of a
+    real, continuous history must not truncate everything before it."""
+    responses = {
+        (2026, 9): {"S": [{"date": "2026-09-01", "consumption": 1.0}]},
+        (2026, 8): {"S": []},  # isolated miss
+        (2026, 7): {"S": [{"date": "2026-07-01", "consumption": 3.0}]},
+        (2026, 6): {"S": [{"date": "2026-06-01", "consumption": 4.0}]},
+        (2026, 5): {"S": []},
+        (2026, 4): {"S": []},
+        (2026, 3): {"S": []},
+    }
+
+    async def fetch_month(year, month):
+        return responses[(year, month)]
+
+    result = await stats._sweep_backward(fetch_month, 2026, 9)
+
+    assert [e["date"] for e in result["S"]] == [
+        "2026-06-01",
+        "2026-07-01",
+        "2026-09-01",
+    ]
 
 
 @pytest.mark.asyncio
@@ -126,9 +161,13 @@ async def test_async_backfill_imports_water_and_heating_and_sets_flag(hass, free
     client.get_daily_consumption.side_effect = [
         {"S": [{"date": "2026-09-01", "consumption": 10.0}], "T": [{"date": "2026-09-01", "consumption": 5.0}]},
         {"S": [], "T": []},
+        {"S": [], "T": []},
+        {"S": [], "T": []},
     ]
     client.get_heating_daily_consumption.side_effect = [
         {"Kuchyňa": [{"date": "2026-09-01", "consumption": 1.0}]},
+        {},
+        {},
         {},
     ]
 
