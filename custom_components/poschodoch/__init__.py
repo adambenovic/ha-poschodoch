@@ -69,7 +69,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # landed or not.
         from homeassistant.components.recorder.statistics import get_last_statistics
 
-        for stat_id in ("poschodoch:heating_daily_kuchyna", "poschodoch:hot_water_daily"):
+        for stat_id in (
+            "poschodoch:cold_water_daily",
+            "poschodoch:hot_water_daily",
+            "poschodoch:heating_daily_spalna",
+            "poschodoch:heating_daily_kuchyna",
+            "poschodoch:heating_daily_detska_izba",
+            "poschodoch:heating_daily_obyvacia_izba",
+        ):
             try:
                 result = await hass.async_add_executor_job(
                     get_last_statistics, hass, 3, stat_id, True, {"sum", "state", "start"}
