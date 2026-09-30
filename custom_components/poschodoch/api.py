@@ -41,6 +41,7 @@ class PoschodochApiClient:
         self._on_tokens_updated = on_tokens_updated
         self._menu_map: dict[str, int] | None = None
         self._menu_map_fetched_at: datetime | None = None
+        self._portal_id: int | None = None
 
     async def get_menu_map(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -195,6 +196,30 @@ class PoschodochApiClient:
                     f"Refresh token rejected (status {resp.status})"
                 )
             body = await resp.json(content_type=None)
+
+        # This intermediate token authenticates but is not yet bound to a
+        # unit/portal — Dashboard/Flat/Object endpoints will 401 until
+        # Auth/changeunit is called, exactly as the real client does after
+        # every login. Set it now so the two calls below can use it.
+        self._id_token = body["auth_token"]
+        self._id_refresh_token = body["refresh_token"]
+
+        await self._activate_unit()
+
+    async def _activate_unit(self) -> None:
+        if self._portal_id is None:
+            status, units = await self._raw_request("GET", "Auth/UnitList/")
+            if status != 200 or not units:
+                raise PoschodochAuthError(
+                    f"Could not list units (status {status})"
+                )
+            self._portal_id = units[0]["PortalId"]
+
+        status, body = await self._raw_request(
+            "POST", "Auth/changeunit", params={"portalId": self._portal_id}
+        )
+        if status != 200:
+            raise PoschodochAuthError(f"Could not activate unit (status {status})")
 
         self._id_token = body["auth_token"]
         self._id_refresh_token = body["refresh_token"]

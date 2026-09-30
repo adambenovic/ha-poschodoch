@@ -17,6 +17,7 @@ async def client_factory():
 
     def _client_factory(**overrides):
         now = datetime.now(timezone.utc)
+        portal_id = overrides.pop("portal_id", 78159)
         defaults = dict(
             id_token="initial-id-token",
             id_refresh_token="initial-refresh-token",
@@ -25,6 +26,7 @@ async def client_factory():
         )
         defaults.update(overrides)
         client = PoschodochApiClient(**defaults)
+        client._portal_id = portal_id
         created.append(client)
         return client
 
@@ -60,6 +62,14 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
         mocked.post(
             "https://api.poschodoch.sk/api/Auth/refresh",
             payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
                 "auth_token": "fresh-token",
                 "refresh_token": "fresh-refresh-token",
                 "expires_in": 7200,
@@ -81,6 +91,13 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
         "AuthToken": "stale-token",
         "RefreshToken": "my-refresh-token",
     }
+
+    changeunit_key = (
+        "POST",
+        URL("https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159"),
+    )
+    changeunit_call = mocked.requests[changeunit_key][0]
+    assert changeunit_call.kwargs["headers"]["X-Auth-Token"] == "intermediate-token"
 
     retry_key = ("GET", URL("https://api.poschodoch.sk/api/Dashboard/UnitInfo/"))
     second_call = mocked.requests[retry_key][1]
@@ -159,6 +176,16 @@ async def test_refresh_parses_success_response_despite_text_plain_content_type(
             status=200,
             content_type="text/plain; charset=utf-8,nosniff",
             payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            status=200,
+            content_type="text/plain; charset=utf-8,nosniff",
+            payload={
                 "auth_token": "fresh-token",
                 "refresh_token": "fresh-refresh-token",
                 "expires_in": 7200,
@@ -183,6 +210,14 @@ async def test_proactively_refreshes_before_expiry_deadline(freezer, client_fact
     with aioresponses() as mocked:
         mocked.post(
             "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
             payload={
                 "auth_token": "fresh-token",
                 "refresh_token": "fresh-refresh-token",
@@ -216,6 +251,14 @@ async def test_does_not_refresh_again_immediately_after_refreshing(freezer, clie
     with aioresponses() as mocked:
         mocked.post(
             "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
             payload={
                 "auth_token": "fresh-token",
                 "refresh_token": "fresh-refresh-token",
@@ -482,6 +525,14 @@ async def test_refresh_calls_on_tokens_updated_callback_with_new_tokens(client_f
         mocked.post(
             "https://api.poschodoch.sk/api/Auth/refresh",
             payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
                 "auth_token": "new-token",
                 "refresh_token": "rotated-refresh-token",
                 "expires_in": 7200,
@@ -495,3 +546,68 @@ async def test_refresh_calls_on_tokens_updated_callback_with_new_tokens(client_f
         await client.request("GET", "Dashboard/UnitInfo/")
 
     assert calls == [("new-token", "rotated-refresh-token")]
+
+
+@pytest.mark.asyncio
+async def test_refresh_discovers_portal_id_via_unit_list_when_not_cached(
+    client_factory,
+):
+    client = client_factory(portal_id=None)
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Auth/UnitList/",
+            payload=[{"UnitId": 26715, "PortalId": 78159}],
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
+                "auth_token": "final-token",
+                "refresh_token": "final-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+
+        await client._refresh()
+
+    assert client._portal_id == 78159
+    assert client._id_token == "final-token"
+
+    unit_list_key = ("GET", URL("https://api.poschodoch.sk/api/Auth/UnitList/"))
+    unit_list_call = mocked.requests[unit_list_key][0]
+    assert unit_list_call.kwargs["headers"]["X-Auth-Token"] == "intermediate-token"
+
+
+@pytest.mark.asyncio
+async def test_refresh_does_not_relookup_portal_id_once_cached(client_factory):
+    client = client_factory(portal_id=78159)
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            payload={
+                "auth_token": "intermediate-token",
+                "refresh_token": "intermediate-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
+                "auth_token": "final-token",
+                "refresh_token": "final-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+        # no Auth/UnitList mock registered: a call to it would raise
+        # ClientConnectionError, failing the test
+
+        await client._refresh()
+
+    assert client._id_token == "final-token"
