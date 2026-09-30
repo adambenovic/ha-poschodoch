@@ -148,6 +148,29 @@ async def test_async_backfill_skips_if_already_backfilled(hass):
 
 
 @pytest.mark.asyncio
+async def test_async_sync_latest_reads_last_statistic_via_executor(hass):
+    """get_last_statistics does blocking database I/O — confirmed live
+    that HA's recorder raises RuntimeError if it's called directly from
+    the event loop instead of via hass.async_add_executor_job."""
+    daily_consumption = {"S": [{"date": "2026-09-24", "consumption": 10.0}]}
+
+    async def fake_executor_job(func, *args):
+        return func(*args)
+
+    with patch(
+        "custom_components.poschodoch.statistics.get_last_statistics",
+        return_value={},
+    ) as mock_get_last, patch(
+        "custom_components.poschodoch.statistics.async_add_external_statistics"
+    ), patch.object(
+        hass, "async_add_executor_job", side_effect=fake_executor_job
+    ) as mock_executor_job:
+        await stats.async_sync_latest(hass, daily_consumption, {})
+
+    mock_executor_job.assert_called_once_with(mock_get_last, hass, 1, f"{DOMAIN}:cold_water_daily", True, {"sum", "start"})
+
+
+@pytest.mark.asyncio
 async def test_async_sync_latest_imports_only_new_entries(hass):
     daily_consumption = {
         "S": [

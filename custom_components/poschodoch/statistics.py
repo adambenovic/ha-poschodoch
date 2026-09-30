@@ -151,18 +151,22 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
     )
 
 
-def _last_statistic(hass: HomeAssistant, statistic_id: str) -> tuple[datetime, float] | None:
-    result = get_last_statistics(hass, 1, statistic_id, True, {"sum", "start"})
+async def _last_statistic(hass: HomeAssistant, statistic_id: str) -> tuple[datetime, float] | None:
+    """get_last_statistics does blocking database I/O — must go through
+    the executor, never called directly from the event loop."""
+    result = await hass.async_add_executor_job(
+        get_last_statistics, hass, 1, statistic_id, True, {"sum", "start"}
+    )
     rows = result.get(statistic_id)
     if not rows:
         return None
     return rows[0]["start"], rows[0]["sum"]
 
 
-def _sync_one_series(
+async def _sync_one_series(
     hass: HomeAssistant, statistic_id: str, name: str, unit: str | None, entries: list[dict]
 ) -> None:
-    last = _last_statistic(hass, statistic_id)
+    last = await _last_statistic(hass, statistic_id)
     last_start, start_sum = last if last is not None else (None, 0.0)
 
     new_entries = [
@@ -205,11 +209,11 @@ async def async_sync_latest(
     for code, (slug, name, unit) in WATER_SERIES.items():
         entries = daily_consumption.get(code, [])
         if entries:
-            _sync_one_series(hass, f"{DOMAIN}:{slug}", name, unit, entries)
+            await _sync_one_series(hass, f"{DOMAIN}:{slug}", name, unit, entries)
 
     for room, entries in heating_daily_consumption.items():
         if entries:
-            _sync_one_series(
+            await _sync_one_series(
                 hass,
                 f"{DOMAIN}:heating_daily_{slugify(room)}",
                 f"Heating daily consumption - {room}",
