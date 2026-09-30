@@ -62,6 +62,27 @@ def test_entries_belong_to_month_false_when_empty():
     assert stats._entries_belong_to_month([], 2022, 3) is False
 
 
+def test_entries_belong_to_month_false_when_all_consumption_is_null():
+    """Confirmed live: for sufficiently old periods the API returns
+    correctly-dated placeholder entries with consumption always null —
+    the date scaffolding exists long before any usable metered data does.
+    A date-only match isn't real history; it just walks the sweep
+    through years of unusable null placeholders."""
+    entries = [
+        {"date": "2008-06-01", "consumption": None},
+        {"date": "2008-06-02", "consumption": None},
+    ]
+    assert stats._entries_belong_to_month(entries, 2008, 6) is False
+
+
+def test_entries_belong_to_month_true_when_some_consumption_is_real():
+    entries = [
+        {"date": "2022-03-01", "consumption": None},
+        {"date": "2022-03-02", "consumption": 1.5},
+    ]
+    assert stats._entries_belong_to_month(entries, 2022, 3) is True
+
+
 def test_build_statistics_computes_cumulative_sum():
     entries = [
         {"date": "2022-03-01", "consumption": 10.0},

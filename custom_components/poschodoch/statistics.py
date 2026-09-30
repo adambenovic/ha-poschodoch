@@ -64,10 +64,19 @@ def _build_metadata(statistic_id: str, name: str, unit: str | None) -> Statistic
 
 
 def _entries_belong_to_month(entries: list[dict], year: int, month: int) -> bool:
+    """A date match alone isn't enough — confirmed live that sufficiently
+    old periods return correctly-dated placeholder entries with
+    consumption always null (the date scaffolding predates any usable
+    metered data). Require at least one entry with real data too, so the
+    sweep stops at the true edge of usable history, not the edge of the
+    date scaffolding."""
     if not entries:
         return False
     prefix = f"{year:04d}-{month:02d}"
-    return any(entry["date"].startswith(prefix) for entry in entries)
+    return any(
+        entry["date"].startswith(prefix) and entry["consumption"] is not None
+        for entry in entries
+    )
 
 
 def _build_statistics(entries: list[dict], start_sum: float) -> list[StatisticData]:
@@ -134,28 +143,6 @@ async def _sweep_backward(
             by_series = {}
         calls_made += 1
         hit = any(_entries_belong_to_month(entries, year, month) for entries in by_series.values())
-        if hit and year < 2015:
-            sample = [
-                (e["date"], e["consumption"])
-                for entries in by_series.values()
-                for e in entries
-            ][:5]
-            null_count = sum(
-                1
-                for entries in by_series.values()
-                for e in entries
-                if e["consumption"] is None
-            )
-            total_count = sum(len(v) for v in by_series.values())
-            _LOGGER.warning(
-                "DIAGNOSTIC [%s] %04d-%02d hit, %d total entries, %d null consumption, sample: %s",
-                label,
-                year,
-                month,
-                total_count,
-                null_count,
-                sample,
-            )
         if calls_made % 6 == 0:
             _LOGGER.warning(
                 "Statistics backfill progress [%s]: checked %04d-%02d (%s), "
