@@ -3,18 +3,21 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import DOMAIN
 
 
-def _latest_reading(readings: list[dict]) -> dict:
+def _latest_reading(readings: list[dict]) -> dict | None:
     """The most recent reading with an actual value. Today's entry can
     still be null (meter hasn't reported yet) even though older days are
-    already available."""
+    already available. None if the series is empty or missing entirely —
+    e.g. a flat with no hot-water metering, or the API returning an empty
+    Consumption list before the first reading of a new month has landed."""
     for reading in reversed(readings):
         if reading["consumption"] is not None:
             return reading
-    return readings[-1]
+    return readings[-1] if readings else None
 
 
 class _PoschodochSensorBase(CoordinatorEntity, SensorEntity):
@@ -60,16 +63,20 @@ class DailyWaterSensor(_PoschodochSensorBase):
 
     @property
     def _latest(self):
-        return _latest_reading(self.coordinator.data["daily_consumption"][self._code])
+        return _latest_reading(
+            self.coordinator.data["daily_consumption"].get(self._code, [])
+        )
 
     @property
     def native_value(self):
-        return self._latest["consumption"]
+        latest = self._latest
+        return latest["consumption"] if latest else None
 
     @property
     def extra_state_attributes(self):
+        latest = self._latest
         return {
-            "date": self._latest["date"],
+            "date": latest["date"] if latest else None,
             "average_last_30_days": self.coordinator.data["rolling_averages"].get(
                 self._code
             ),
@@ -80,25 +87,31 @@ class HeatingRoomDailySensor(_PoschodochSensorBase):
     """Latest daily heat-cost-allocator reading for one room."""
 
     def __init__(self, coordinator, room: str) -> None:
+        # Matches statistics.py's identity scheme for the same room
+        # (f"{DOMAIN}:heating_daily_{slugify(room)}") — using the raw name
+        # here would give the entity and its long-term statistic two
+        # different identities for one thing.
         super().__init__(
-            coordinator, f"Heating - {room}", f"poschodoch_heating_{room}"
+            coordinator, f"Heating - {room}", f"poschodoch_heating_{slugify(room)}"
         )
         self._room = room
 
     @property
     def _latest(self):
         return _latest_reading(
-            self.coordinator.data["heating_daily_consumption"][self._room]
+            self.coordinator.data["heating_daily_consumption"].get(self._room, [])
         )
 
     @property
     def native_value(self):
-        return self._latest["consumption"]
+        latest = self._latest
+        return latest["consumption"] if latest else None
 
     @property
     def extra_state_attributes(self):
+        latest = self._latest
         return {
-            "date": self._latest["date"],
+            "date": latest["date"] if latest else None,
             "average_last_30_days": self.coordinator.data["rolling_averages"].get(
                 self._room
             ),
@@ -129,7 +142,8 @@ class AccountBalanceSensor(_PoschodochSensorBase):
 
 
 class RepairFundBalanceSensor(_PoschodochSensorBase):
-    """Repair fund balance for the current year."""
+    """Repair fund's lifetime balance since fund inception (see since_year
+    attribute), not scoped to the current year."""
 
     _attr_native_unit_of_measurement = "EUR"
     _attr_device_class = "monetary"

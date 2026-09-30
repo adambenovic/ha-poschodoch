@@ -67,6 +67,17 @@ def test_daily_water_sensor_rolling_average_none_when_unavailable():
     assert sensor.extra_state_attributes["average_last_30_days"] is None
 
 
+def test_heating_room_sensor_unique_id_is_slugified():
+    """statistics.py's statistic_id for the same room already uses
+    slugify() (f"{DOMAIN}:heating_daily_{slugify(room)}") — unique_id must
+    use the same identity scheme, or a room name with diacritics/spaces
+    gets two different identities: one raw for the entity, one slugified
+    for its long-term statistic."""
+    coordinator = make_coordinator()
+    sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
+    assert sensor._attr_unique_id == "poschodoch_heating_kuchyna"
+
+
 def test_heating_room_sensor_reports_latest_day():
     coordinator = make_coordinator()
     sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
@@ -101,6 +112,37 @@ def test_heating_room_sensor_skips_trailing_null_reading():
     sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
     assert sensor.native_value == 1.5
     assert sensor.extra_state_attributes["date"] == "2026-09-24"
+
+
+def test_daily_water_sensor_native_value_none_when_series_missing():
+    """A flat with no hot-water metering never has "T" in the response at
+    all (partitioned dict only gets keys for codes actually present) — the
+    sensor must go 'unknown' instead of raising KeyError on every poll."""
+    coordinator = make_coordinator()
+    del coordinator.data["daily_consumption"]["T"]
+    sensor = DailyWaterSensor(coordinator, "T", "Hot water daily")
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes["date"] is None
+
+
+def test_daily_water_sensor_native_value_none_when_series_empty():
+    """Early on the 1st of a month, before any reading has landed, the API
+    can return an empty Consumption list entirely."""
+    coordinator = make_coordinator()
+    coordinator.data["daily_consumption"]["S"] = []
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.native_value is None
+
+
+def test_heating_room_sensor_native_value_none_when_room_missing():
+    """A room can drop out of a later poll's response (allocator swap, no
+    data yet for the new month) even though its entity persists across
+    restarts via unique_id."""
+    coordinator = make_coordinator()
+    del coordinator.data["heating_daily_consumption"]["Kuchyňa"]
+    sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes["date"] is None
 
 
 def test_account_balance_sensor_reports_due_balance():
