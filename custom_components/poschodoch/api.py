@@ -64,6 +64,58 @@ class PoschodochApiClient:
         self._menu_map_fetched_at = now
         return self._menu_map
 
+    async def diag_probe_daily_consumption_params(self) -> None:
+        """Throwaway: only invoked manually via the debug_probe service to
+        determine whether Flat/DailyConsumption accepts a historical
+        month/year range, never called from normal setup/coordinator
+        code, so it can't affect any existing test."""
+        menu_map = await self.get_menu_map()
+        menu_id = menu_map["DailyConsumption"]
+        candidates = [
+            {"menuId": menu_id, "type": "S", "year": 2022},
+            {"menuId": menu_id, "type": "S", "year": 2022, "month": 3},
+            {"menuId": menu_id, "type": "S", "dateFrom": "2022-03-01", "dateTo": "2022-03-31"},
+            {"menuId": menu_id, "type": "S", "year": 2025, "month": 6},
+        ]
+        for params in candidates:
+            try:
+                body = await self.request("GET", "Flat/DailyConsumption", params=params)
+                dates = sorted(e["Date"] for e in body.get("Consumption", []))
+                _LOGGER.warning(
+                    "DIAGNOSTIC probe params=%s -> %d entries, range %s..%s",
+                    params,
+                    len(dates),
+                    dates[0] if dates else None,
+                    dates[-1] if dates else None,
+                )
+            except Exception as err:  # pylint: disable=broad-except
+                _LOGGER.warning("DIAGNOSTIC probe params=%s -> ERROR %s", params, err)
+
+        menu_dump = await self.request("GET", "Dashboard/Menu")
+        meter_daily_menu = next(
+            (e for e in menu_dump if e["MenuCode"] == "MeterDailyReadingsUser"), None
+        )
+        if meter_daily_menu is not None:
+            for path in (
+                "Flat/MeterDailyReadingsUser",
+                "Flat/MeterDailyReadings",
+                "Flat/MeterDailyReadingsUser/",
+            ):
+                try:
+                    status, body = await self._raw_request(
+                        "GET",
+                        path,
+                        params={"menuId": meter_daily_menu["MenuId"]},
+                    )
+                    _LOGGER.warning(
+                        "DIAGNOSTIC probe path=%s -> status=%s body=%s",
+                        path,
+                        status,
+                        json.dumps(body, ensure_ascii=False)[:500],
+                    )
+                except Exception as err:  # pylint: disable=broad-except
+                    _LOGGER.warning("DIAGNOSTIC probe path=%s -> ERROR %s", path, err)
+
     async def get_daily_consumption(self) -> dict[str, list[dict]]:
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
