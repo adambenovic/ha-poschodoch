@@ -1,6 +1,7 @@
 """API client for poschodoch.sk."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,21 @@ MENU_CACHE_LIFETIME = timedelta(hours=24)
 
 class PoschodochAuthError(Exception):
     """Raised when the refresh token itself is rejected."""
+
+
+class PoschodochApiError(Exception):
+    """Raised when the server returns a non-2xx status other than 401."""
+
+
+def _year_month_params(year: int | None, month: int | None) -> dict[str, int]:
+    """year and month must travel together — one without the other used
+    to reach yarl as month=None and raise an opaque TypeError instead of
+    a clear error."""
+    if year is None and month is None:
+        return {}
+    if year is None or month is None:
+        raise ValueError("year and month must be provided together")
+    return {"year": year, "month": month}
 
 
 def _to_float(value: str | float | None) -> float | None:
@@ -49,6 +65,26 @@ class PoschodochApiClient:
         self._menu_map: dict[str, int] | None = None
         self._menu_map_fetched_at: datetime | None = None
         self._portal_id: int | None = None
+        # The backfill's one-time sweep (up to 700 sequential requests) can
+        # run as a background task for well over an hour, overlapping with
+        # the coordinator's own hourly poll — both share this client, so
+        # refresh/activate must be serialized or they'd race to rotate the
+        # token pair out from under each other.
+        self._refresh_lock = asyncio.Lock()
+
+    @property
+    def token_state(self) -> dict[str, str]:
+        """The current token pair and expiry, shaped exactly like
+        entry.data's CONF_* keys (id_token, id_refresh_token,
+        token_expires_at, refresh_after) so a caller can spread it
+        straight into an update instead of reaching into private
+        attributes."""
+        return {
+            "id_token": self._id_token,
+            "id_refresh_token": self._id_refresh_token,
+            "token_expires_at": self._token_expires_at.isoformat(),
+            "refresh_after": self._refresh_after.isoformat(),
+        }
 
     async def get_menu_map(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -64,39 +100,35 @@ class PoschodochApiClient:
         self._menu_map_fetched_at = now
         return self._menu_map
 
-    async def get_daily_consumption(
-        self, year: int | None = None, month: int | None = None
+    async def _daily_consumption(
+        self, type_code: str, group_by: str, year: int | None, month: int | None
     ) -> dict[str, list[dict]]:
+        """Flat/DailyConsumption's grouping key depends on which series
+        you're asking for: type="S" (water) groups by "Code" (cold/hot
+        split), type="U" (heating) groups by "Type" (per-room
+        allocators) — a single payload carries both fields populated, so
+        picking the wrong one silently returns the other series' split."""
+        params = _year_month_params(year, month)
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
-        params = {"menuId": menu_id, "type": "S"}
-        if year is not None:
-            params["year"] = year
-            params["month"] = month
+        params = {"menuId": menu_id, "type": type_code, **params}
         body = await self.request("GET", "Flat/DailyConsumption", params=params)
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
-            partitioned.setdefault(entry["Code"], []).append(
+            partitioned.setdefault(entry[group_by], []).append(
                 {"date": entry["Date"], "consumption": _to_float(entry["Consumption"])}
             )
         return partitioned
 
+    async def get_daily_consumption(
+        self, year: int | None = None, month: int | None = None
+    ) -> dict[str, list[dict]]:
+        return await self._daily_consumption("S", "Code", year, month)
+
     async def get_heating_daily_consumption(
         self, year: int | None = None, month: int | None = None
     ) -> dict[str, list[dict]]:
-        menu_map = await self.get_menu_map()
-        menu_id = menu_map["DailyConsumption"]
-        params = {"menuId": menu_id, "type": "U"}
-        if year is not None:
-            params["year"] = year
-            params["month"] = month
-        body = await self.request("GET", "Flat/DailyConsumption", params=params)
-        by_room: dict[str, list[dict]] = {}
-        for entry in body["Consumption"]:
-            by_room.setdefault(entry["Type"], []).append(
-                {"date": entry["Date"], "consumption": _to_float(entry["Consumption"])}
-            )
-        return by_room
+        return await self._daily_consumption("U", "Type", year, month)
 
     async def get_consumption_status(self, type_code: str) -> dict:
         menu_map = await self.get_menu_map()
@@ -197,14 +229,28 @@ class PoschodochApiClient:
             return resp.status, await resp.json(content_type=None)
 
     async def request(self, method: str, path: str, **kwargs):
-        if datetime.now(timezone.utc) >= self._refresh_after:
-            await self._refresh()
+        async with self._refresh_lock:
+            # Re-checked after acquiring the lock, not just before: if two
+            # callers both saw _refresh_after in the past, the loser must
+            # observe the winner's already-completed refresh and skip its
+            # own, not refresh a second time.
+            if datetime.now(timezone.utc) >= self._refresh_after:
+                await self._refresh()
         status, body = await self._raw_request(method, path, **kwargs)
         if status == 401:
-            await self._refresh()
+            async with self._refresh_lock:
+                await self._refresh()
             status, body = await self._raw_request(method, path, **kwargs)
             if status == 401:
                 raise PoschodochAuthError("Refresh token rejected")
+        if not 200 <= status < 300:
+            # Message stays generic — it ends up in HA's logs, which users
+            # routinely share publicly for support. Raw body only at DEBUG,
+            # same pattern as _refresh's error handling below.
+            _LOGGER.debug(
+                "%s %s returned status %s: %s", method, path, status, body
+            )
+            raise PoschodochApiError(f"poschodoch.sk returned status {status} for {path}")
         return body
 
     async def _refresh(self) -> None:

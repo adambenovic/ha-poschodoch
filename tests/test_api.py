@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import aiohttp
 import pytest
@@ -8,7 +10,11 @@ import pytest_asyncio
 from aioresponses import aioresponses
 from yarl import URL
 
-from custom_components.poschodoch.api import PoschodochApiClient, PoschodochAuthError
+from custom_components.poschodoch.api import (
+    PoschodochApiClient,
+    PoschodochApiError,
+    PoschodochAuthError,
+)
 
 
 @pytest_asyncio.fixture
@@ -34,6 +40,28 @@ async def client_factory():
 
     for client in created:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_token_state_exposes_current_tokens_and_expiry_as_isoformat(client_factory):
+    """config_flow.py and __init__.py both used to reach into private
+    attributes (client._id_token, etc.) directly — one public accessor
+    instead, shaped exactly like entry.data's CONF_* keys so it can be
+    spread straight into an update."""
+    now = datetime.now(timezone.utc)
+    client = client_factory(
+        id_token="the-id-token",
+        id_refresh_token="the-refresh-token",
+        token_expires_at=now + timedelta(hours=2),
+        refresh_after=now + timedelta(hours=1),
+    )
+
+    assert client.token_state == {
+        "id_token": "the-id-token",
+        "id_refresh_token": "the-refresh-token",
+        "token_expires_at": (now + timedelta(hours=2)).isoformat(),
+        "refresh_after": (now + timedelta(hours=1)).isoformat(),
+    }
 
 
 @pytest.mark.asyncio
@@ -105,6 +133,43 @@ async def test_request_refreshes_and_retries_once_on_401(client_factory):
 
 
 @pytest.mark.asyncio
+async def test_refresh_calls_are_serialized_across_concurrent_requests(client_factory):
+    """The one-time backfill sweep (up to 700 sequential requests) runs as
+    a background task alongside the coordinator's hourly poll, both
+    sharing this same client, whose refresh/activate wasn't lock-protected
+    — two callers that both see _refresh_after in the past could each
+    independently rotate the token pair, racing each other."""
+    now = datetime.now(timezone.utc)
+    client = client_factory(refresh_after=now - timedelta(seconds=1))
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def fake_refresh():
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/UnitInfo/", payload={"UnitId": 1}
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/UnitInfo/", payload={"UnitId": 1}
+        )
+
+        with patch.object(client, "_refresh", side_effect=fake_refresh):
+            await asyncio.gather(
+                client.request("GET", "Dashboard/UnitInfo/"),
+                client.request("GET", "Dashboard/UnitInfo/"),
+            )
+
+    assert max_in_flight == 1
+
+
+@pytest.mark.asyncio
 async def test_rejected_refresh_token_raises_auth_error(client_factory):
     client = client_factory(id_refresh_token="dead-refresh-token")
     with aioresponses() as mocked:
@@ -161,6 +226,64 @@ async def test_rejected_refresh_logs_raw_server_response_at_debug_level(
                 await client._refresh()
 
     assert "Invalid refresh token(1)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_request_raises_on_non_2xx_status_other_than_401(client_factory):
+    """Only 401 was ever handled — a 500/502/etc used to flow the raw error
+    body straight back to the caller, which immediately subscripted it
+    (body["Consumption"], ...), turning a server outage into a confusing
+    KeyError/TypeError instead of a clear error."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption",
+            status=500,
+            payload={"error": "internal server error"},
+        )
+
+        with pytest.raises(PoschodochApiError) as exc_info:
+            await client.request("GET", "Flat/DailyConsumption")
+
+    assert "500" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_request_error_message_does_not_leak_raw_server_response(client_factory):
+    """Same generic-message principle as the Auth/refresh error path — the
+    exception message ends up in HA's logs, which users routinely share
+    publicly for support."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption",
+            status=500,
+            payload={"error": "some possibly-sensitive internal detail"},
+        )
+
+        with pytest.raises(PoschodochApiError) as exc_info:
+            await client.request("GET", "Flat/DailyConsumption")
+
+    assert "some possibly-sensitive internal detail" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_request_logs_raw_server_response_at_debug_level_on_error(
+    client_factory, caplog
+):
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption",
+            status=500,
+            payload={"error": "some possibly-sensitive internal detail"},
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="custom_components.poschodoch.api"):
+            with pytest.raises(PoschodochApiError):
+                await client.request("GET", "Flat/DailyConsumption")
+
+    assert "some possibly-sensitive internal detail" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -376,6 +499,16 @@ async def test_get_daily_consumption_accepts_historical_year_month(client_factor
         result = await client.get_daily_consumption(year=2022, month=3)
 
     assert result["S"][0]["date"] == "2022-03-01"
+
+
+@pytest.mark.asyncio
+async def test_get_daily_consumption_rejects_year_without_month(client_factory):
+    """The signature advertises year and month as independently optional,
+    but passing year alone used to reach yarl with month=None and raise an
+    opaque TypeError instead of a clear, actionable error."""
+    client = client_factory()
+    with pytest.raises(ValueError, match="year and month"):
+        await client.get_daily_consumption(year=2022)
 
 
 @pytest.mark.asyncio
@@ -689,6 +822,13 @@ async def test_get_heating_daily_consumption_accepts_historical_year_month(clien
         result = await client.get_heating_daily_consumption(year=2022, month=3)
 
     assert result["Kuchyňa"][0]["date"] == "2022-03-01"
+
+
+@pytest.mark.asyncio
+async def test_get_heating_daily_consumption_rejects_year_without_month(client_factory):
+    client = client_factory()
+    with pytest.raises(ValueError, match="year and month"):
+        await client.get_heating_daily_consumption(year=2022)
 
 
 @pytest.mark.asyncio
