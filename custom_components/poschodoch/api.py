@@ -21,6 +21,11 @@ class PoschodochAuthError(Exception):
     """Raised when the refresh token itself is rejected."""
 
 
+def _entries_belong_to_year(entries: list[dict], year: int) -> bool:
+    year_prefix = str(year)
+    return any(entry["date"].startswith(year_prefix) for entry in entries)
+
+
 def _to_float(value: str | float | None) -> float | None:
     """poschodoch.sk sends numeric fields as JSON strings, but some (e.g. a
     missed meter reading or a not-yet-billed period) legitimately come back
@@ -202,19 +207,19 @@ class PoschodochApiClient:
         for offset in range(1, REPAIR_FUND_LOOKBACK_YEARS_CAP + 1):
             year = current_year - offset
             entries = await self._fetch_repair_fund_year(menu_id, year)
-            _LOGGER.warning(
-                "DIAGNOSTIC RepairFund year=%s: %d entries, sample=%s",
-                year,
-                len(entries),
-                entries[:2],
-            )
-            if not entries:
+            if not entries or not _entries_belong_to_year(entries, year):
+                # Confirmed live: for years far enough back, the real API
+                # stops honoring `year` and just echoes the current year's
+                # ledger instead of returning empty. Treat that the same as
+                # "no more history" — stop here and discard this response,
+                # since counting it would double-count the same entries.
                 break
             history[year] = entries
         else:
             _LOGGER.warning(
                 "Repair fund history lookup hit the %s-year safety cap "
-                "without finding an empty year; balance may be understated",
+                "without finding the start of the fund's history; "
+                "balance may be understated",
                 REPAIR_FUND_LOOKBACK_YEARS_CAP,
             )
         return history

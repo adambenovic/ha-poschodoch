@@ -200,7 +200,9 @@ tests/
 | Hot water — last daily | latest day's `Consumption` (L) | `date` |
 | Heating — last daily (per room) | latest day's `Consumption`, one entity per room found in `MeterReadings` (`ClimbingIron`) | `date`, `meter_number` |
 | Account balance | `DueBalance` (EUR) | `due_date`, `last_payment_amount`, `last_payment_date` |
-| Repair fund balance | sum of `Amount` across every calendar year's ledger since the fund started, walked backward year-by-year (`Object/RepairFund?year=<yyyy>`) until an empty year is hit; past years are cached forever, only the current year is re-fetched each poll — a single year's sum was found to be off by thousands of euros vs. the real balance | `recent_entries` (last 5 across all years, sorted by date desc), `year`, `since_year` |
+| Repair fund balance | sum of `Amount` across every calendar year's ledger since the fund started, walked backward year-by-year (`Object/RepairFund?year=<yyyy>`) until a year's response doesn't actually belong to that year; past years are cached forever, only the current year is re-fetched each poll — a single year's sum was found to be off by thousands of euros vs. the real balance | `recent_entries` (last 5 across all years, sorted by date desc), `year`, `since_year` |
+
+**Backend quirk (confirmed live):** `Object/RepairFund?year=<yyyy>` does **not** return an empty list once you walk far enough back past the fund's actual start — it silently ignores the `year` param and echoes back the current year's ledger instead. The walk-backward loop can't use "empty response" as its only stop condition; it must check whether the returned entries' own `Date` fields actually fall within the requested year, and stop (discarding that response) the first time they don't — otherwise the same entries get counted many times over.
 
 Per-room heating sensors are created dynamically from whatever rooms
 `MeterReadings` returns for meter type `UK` — no hardcoded room names,

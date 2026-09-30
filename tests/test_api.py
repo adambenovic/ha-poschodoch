@@ -633,6 +633,42 @@ async def test_get_repair_fund_stops_at_safety_cap(freezer, client_factory, monk
 
 
 @pytest.mark.asyncio
+async def test_get_repair_fund_stops_when_server_ignores_year_filter(freezer, client_factory):
+    """Confirmed live: for years far enough back, the real API stops
+    honoring the `year` query param and just echoes the current year's
+    ledger instead of returning empty — walking further back must detect
+    and discard that, not double-count it as more history."""
+    freezer.move_to("2026-09-29")
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"RepairFund": [{"Amount": "100.00", "Date": "2026-03-01", "Description": "TVORBA FO"}]},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2025",
+            payload={"RepairFund": [{"Amount": "200.00", "Date": "2025-03-01", "Description": "TVORBA FO"}]},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2024",
+            payload={
+                "RepairFund": [
+                    {"Amount": "100.00", "Date": "2026-03-01", "Description": "TVORBA FO"}
+                ]
+            },
+        )
+
+        result = await client.get_repair_fund()
+
+    assert result["balance"] == pytest.approx(300.00)
+    assert result["since_year"] == 2025
+
+
+@pytest.mark.asyncio
 async def test_get_repair_fund_tolerates_null_amount(freezer, client_factory):
     """A pending/unposted ledger entry can have a null Amount."""
     freezer.move_to("2026-09-29")
