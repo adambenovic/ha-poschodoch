@@ -72,12 +72,11 @@ class PoschodochApiClient:
         menu_map = await self.get_menu_map()
         menu_id = menu_map["DailyConsumption"]
         candidates = [
+            {"menuId": menu_id, "type": "S", "year": 1990, "month": 1},
             {"menuId": menu_id, "type": "S", "year": 2010, "month": 1},
-            {"menuId": menu_id, "type": "S", "year": 2018, "month": 6},
-            {"menuId": menu_id, "type": "S", "year": 2021, "month": 12},
-            {"menuId": menu_id, "type": "S", "year": 2022, "month": 1},
-            {"menuId": menu_id, "type": "U", "year": 2022, "month": 3},
-            {"menuId": menu_id, "type": "S", "year": 2027, "month": 3},
+            {"menuId": menu_id, "type": "S", "year": 2015, "month": 1},
+            {"menuId": menu_id, "type": "U", "year": 2018, "month": 6},
+            {"menuId": menu_id, "type": "U", "year": 2015, "month": 1},
         ]
         for params in candidates:
             try:
