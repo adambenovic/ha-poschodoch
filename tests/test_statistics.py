@@ -7,6 +7,23 @@ from custom_components.poschodoch import statistics as stats
 from custom_components.poschodoch.const import CONF_STATS_BACKFILLED, DOMAIN
 
 
+def test_build_metadata_includes_mean_type_when_available():
+    """StatisticMetaData in newer HA versions requires mean_type (has_mean
+    is deprecated) — confirmed live against HA 2026.9.4, which our pinned
+    dev/test HA version (2025.1.4) predates and doesn't expose at all, so
+    this must degrade gracefully rather than import-erroring on either."""
+    metadata = stats._build_metadata("poschodoch:cold_water_daily", "Cold water", "L")
+
+    assert metadata["has_sum"] is True
+    assert metadata["source"] == DOMAIN
+    assert metadata["statistic_id"] == "poschodoch:cold_water_daily"
+    assert metadata["unit_of_measurement"] == "L"
+    if stats.StatisticMeanType is not None:
+        assert metadata["mean_type"] == stats.StatisticMeanType.NONE
+    else:
+        assert metadata["has_mean"] is False
+
+
 def test_entries_belong_to_month_true_when_dates_match():
     entries = [{"date": "2022-03-01", "consumption": 1.0}]
     assert stats._entries_belong_to_month(entries, 2022, 3) is True

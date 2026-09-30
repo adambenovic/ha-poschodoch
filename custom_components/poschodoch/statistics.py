@@ -23,6 +23,14 @@ from homeassistant.util import slugify
 
 from .const import CONF_STATS_BACKFILLED, DOMAIN
 
+try:
+    # Added in a later HA release than our pinned dev/test dependency
+    # (2025.1.4) — has_mean is deprecated in favor of this on newer HA,
+    # confirmed live against 2026.9.4. Degrade gracefully on either.
+    from homeassistant.components.recorder.models import StatisticMeanType
+except ImportError:
+    StatisticMeanType = None
+
 _LOGGER = logging.getLogger(__name__)
 
 MAX_BACKFILL_MONTHS = 700
@@ -31,6 +39,18 @@ WATER_SERIES = {
     "S": ("cold_water_daily", "Cold water daily consumption", "L"),
     "T": ("hot_water_daily", "Hot water daily consumption", "L"),
 }
+
+
+def _build_metadata(statistic_id: str, name: str, unit: str | None) -> StatisticMetaData:
+    extra = {"mean_type": StatisticMeanType.NONE} if StatisticMeanType is not None else {"has_mean": False}
+    return StatisticMetaData(
+        has_sum=True,
+        name=name,
+        source=DOMAIN,
+        statistic_id=statistic_id,
+        unit_of_measurement=unit,
+        **extra,
+    )
 
 
 def _entries_belong_to_month(entries: list[dict], year: int, month: int) -> bool:
@@ -119,14 +139,7 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         if not entries:
             continue
         statistic_id = f"{DOMAIN}:{slug}"
-        metadata = StatisticMetaData(
-            has_mean=False,
-            has_sum=True,
-            name=name,
-            source=DOMAIN,
-            statistic_id=statistic_id,
-            unit_of_measurement=unit,
-        )
+        metadata = _build_metadata(statistic_id, name, unit)
         async_add_external_statistics(hass, metadata, _build_statistics(entries, 0.0))
 
     heating_history = await _sweep_backward(
@@ -136,13 +149,8 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
         if not entries:
             continue
         statistic_id = f"{DOMAIN}:heating_daily_{slugify(room)}"
-        metadata = StatisticMetaData(
-            has_mean=False,
-            has_sum=True,
-            name=f"Heating daily consumption - {room}",
-            source=DOMAIN,
-            statistic_id=statistic_id,
-            unit_of_measurement=None,
+        metadata = _build_metadata(
+            statistic_id, f"Heating daily consumption - {room}", None
         )
         async_add_external_statistics(hass, metadata, _build_statistics(entries, 0.0))
 
@@ -185,14 +193,7 @@ async def _sync_one_series(
     if not points:
         return
 
-    metadata = StatisticMetaData(
-        has_mean=False,
-        has_sum=True,
-        name=name,
-        source=DOMAIN,
-        statistic_id=statistic_id,
-        unit_of_measurement=unit,
-    )
+    metadata = _build_metadata(statistic_id, name, unit)
     async_add_external_statistics(hass, metadata, points)
 
 
