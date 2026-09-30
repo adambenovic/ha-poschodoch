@@ -42,6 +42,11 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
         except PoschodochAuthError as err:
             raise ConfigEntryAuthFailed from err
         except Exception as err:  # pylint: disable=broad-except
+            # Home Assistant's own ConfigEntryNotReady/UpdateFailed handling
+            # only ever surfaces str(err) to the user — no traceback — so
+            # without logging it here ourselves, an unexpected bug is
+            # completely undiagnosable from the logs alone.
+            _LOGGER.exception("Unexpected error fetching poschodoch.sk data")
             raise UpdateFailed(str(err)) from err
 
         return {

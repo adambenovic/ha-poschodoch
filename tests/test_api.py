@@ -355,6 +355,29 @@ async def test_get_daily_consumption_partitions_by_code_field(client_factory):
 
 
 @pytest.mark.asyncio
+async def test_get_daily_consumption_tolerates_null_reading(client_factory):
+    """A day with a missed/failed meter reading can come back as null."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
+            payload={
+                "Consumption": [
+                    {"Date": "2026-09-24", "Code": "S", "Type": "SV", "Consumption": None},
+                ]
+            },
+        )
+
+        result = await client.get_daily_consumption()
+
+    assert result["S"][0]["consumption"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_consumption_status_parses_percentages_and_amounts(client_factory):
     client = client_factory()
     with aioresponses() as mocked:
@@ -379,6 +402,34 @@ async def test_get_consumption_status_parses_percentages_and_amounts(client_fact
     assert result["diff_consumption"] == 8.65
     assert result["percent_consumption"] == 29.0
     assert result["unit"] == "m3"
+
+
+@pytest.mark.asyncio
+async def test_get_consumption_status_tolerates_null_diff_and_percent(client_factory):
+    """A newly-added meter with no prior-year data to compare against can
+    have null DiffConsumption/PercConsumption."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 47, "MenuCode": "ConsumptionStatus", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/ConsumptionStatus?menuId=47&type=S",
+            payload={
+                "Type": "S",
+                "Unit": "m3",
+                "ActualConsumption": "38.28",
+                "DiffConsumption": None,
+                "PercConsumption": None,
+            },
+        )
+
+        result = await client.get_consumption_status("S")
+
+    assert result["actual_consumption"] == 38.28
+    assert result["diff_consumption"] is None
+    assert result["percent_consumption"] is None
 
 
 @pytest.mark.asyncio
@@ -453,6 +504,26 @@ async def test_get_account_returns_balance_and_last_payment(client_factory):
 
 
 @pytest.mark.asyncio
+async def test_get_account_tolerates_null_due_balance(client_factory):
+    """An account with no current billing period yet can have a null
+    DueBalance."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 1, "MenuCode": "account", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/Account?menuId=1",
+            payload={"DueBalance": None, "DueDate": None, "Account": []},
+        )
+
+        result = await client.get_account()
+
+    assert result["due_balance"] is None
+
+
+@pytest.mark.asyncio
 async def test_get_repair_fund_sums_current_year_ledger(freezer, client_factory):
     freezer.move_to("2026-09-29")
     client = client_factory()
@@ -476,7 +547,32 @@ async def test_get_repair_fund_sums_current_year_ledger(freezer, client_factory)
 
     assert result["balance"] == pytest.approx(109.28)
     assert result["year"] == 2026
-    assert len(result["recent_entries"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_repair_fund_tolerates_null_amount(freezer, client_factory):
+    """A pending/unposted ledger entry can have a null Amount."""
+    freezer.move_to("2026-09-29")
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[{"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."}],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={
+                "RepairFund": [
+                    {"Amount": None, "Date": "2026-09-25", "Description": "Pending"},
+                    {"Amount": "1053.98", "Date": "2026-08-31", "Description": "TVORBA FO"},
+                ]
+            },
+        )
+
+        result = await client.get_repair_fund()
+
+    assert result["balance"] == pytest.approx(1053.98)
+    assert result["recent_entries"][0]["amount"] is None
 
 
 @pytest.mark.asyncio

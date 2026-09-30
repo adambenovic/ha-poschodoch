@@ -75,3 +75,29 @@ async def test_coordinator_raises_update_failed_on_other_errors(hass):
     await coordinator.async_refresh()
 
     assert isinstance(coordinator.last_exception, UpdateFailed)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_logs_full_traceback_on_unexpected_errors(hass, caplog):
+    """Home Assistant's own UpdateFailed/ConfigEntryNotReady handling only
+    surfaces str(err) to the user, with no traceback — without an explicit
+    log here, an unexpected bug is undiagnosable from the logs alone."""
+    import logging
+
+    client = make_fake_client()
+    client.get_daily_consumption.side_effect = TypeError(
+        "float() argument must be a string or a real number, not 'NoneType'"
+    )
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    with caplog.at_level(logging.ERROR, logger="custom_components.poschodoch.coordinator"):
+        await coordinator.async_refresh()
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == "custom_components.poschodoch.coordinator"
+    ]
+    assert any(r.exc_info is not None for r in records), (
+        "expected a log record with a full traceback (exc_info), found none"
+    )

@@ -20,6 +20,13 @@ class PoschodochAuthError(Exception):
     """Raised when the refresh token itself is rejected."""
 
 
+def _to_float(value: str | float | None) -> float | None:
+    """poschodoch.sk sends numeric fields as JSON strings, but some (e.g. a
+    missed meter reading or a not-yet-billed period) legitimately come back
+    as null."""
+    return None if value is None else float(value)
+
+
 class PoschodochApiClient:
     """Talks to the poschodoch.sk backend."""
 
@@ -66,7 +73,7 @@ class PoschodochApiClient:
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
             partitioned.setdefault(entry["Code"], []).append(
-                {"date": entry["Date"], "consumption": float(entry["Consumption"])}
+                {"date": entry["Date"], "consumption": _to_float(entry["Consumption"])}
             )
         return partitioned
 
@@ -79,7 +86,7 @@ class PoschodochApiClient:
         by_room: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
             by_room.setdefault(entry["Type"], []).append(
-                {"date": entry["Date"], "consumption": float(entry["Consumption"])}
+                {"date": entry["Date"], "consumption": _to_float(entry["Consumption"])}
             )
         return by_room
 
@@ -91,10 +98,15 @@ class PoschodochApiClient:
             "Flat/ConsumptionStatus",
             params={"menuId": menu_id, "type": type_code},
         )
+        percent_consumption = _to_float(body["PercConsumption"])
         return {
-            "actual_consumption": float(body["ActualConsumption"]),
-            "diff_consumption": float(body["DiffConsumption"]),
-            "percent_consumption": round(float(body["PercConsumption"]) * 100, 1),
+            "actual_consumption": _to_float(body["ActualConsumption"]),
+            "diff_consumption": _to_float(body["DiffConsumption"]),
+            "percent_consumption": (
+                round(percent_consumption * 100, 1)
+                if percent_consumption is not None
+                else None
+            ),
             "unit": body["Unit"],
         }
 
@@ -126,9 +138,9 @@ class PoschodochApiClient:
             (e for e in body["Account"] if e["TypeOfMovement"] == "P"), None
         )
         return {
-            "due_balance": float(body["DueBalance"]),
+            "due_balance": _to_float(body["DueBalance"]),
             "due_date": body["DueDate"],
-            "last_payment_amount": float(last_payment["Amount"]) if last_payment else None,
+            "last_payment_amount": _to_float(last_payment["Amount"]) if last_payment else None,
             "last_payment_date": last_payment["CreditDate"] if last_payment else None,
         }
 
@@ -140,10 +152,10 @@ class PoschodochApiClient:
             "GET", "Object/RepairFund", params={"menuId": menu_id, "year": year}
         )
         entries = body["RepairFund"]
-        balance = sum(float(e["Amount"]) for e in entries)
+        balance = sum(_to_float(e["Amount"]) or 0 for e in entries)
         recent_entries = [
             {
-                "amount": float(e["Amount"]),
+                "amount": _to_float(e["Amount"]),
                 "date": e["Date"],
                 "description": e["Description"],
             }
