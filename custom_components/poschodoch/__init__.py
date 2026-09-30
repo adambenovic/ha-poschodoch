@@ -68,6 +68,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, _run_backfill(), "poschodoch_stats_backfill"
     )
 
+    async def debug_reset_backfill(call) -> None:
+        from .const import CONF_STATS_BACKFILLED
+
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_STATS_BACKFILLED: False}
+        )
+        entry.async_create_background_task(
+            hass, _run_backfill(), "poschodoch_stats_backfill_manual"
+        )
+
+    hass.services.async_register(DOMAIN, "debug_reset_backfill", debug_reset_backfill)
+
     return True
 
 
