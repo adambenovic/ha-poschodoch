@@ -200,7 +200,7 @@ tests/
 | Hot water — last daily | latest day's `Consumption` (L) | `date` |
 | Heating — last daily (per room) | latest day's `Consumption`, one entity per room found in `MeterReadings` (`ClimbingIron`) | `date`, `meter_number` |
 | Account balance | `DueBalance` (EUR) | `due_date`, `last_payment_amount`, `last_payment_date` |
-| Repair fund balance | sum of `Amount` across the current calendar year's ledger (`Object/RepairFund?year=<current year>`) | `recent_entries` (last 5, as list of dicts), `year` |
+| Repair fund balance | sum of `Amount` across every calendar year's ledger since the fund started, walked backward year-by-year (`Object/RepairFund?year=<yyyy>`) until an empty year is hit; past years are cached forever, only the current year is re-fetched each poll — a single year's sum was found to be off by thousands of euros vs. the real balance | `recent_entries` (last 5 across all years, sorted by date desc), `year`, `since_year` |
 
 Per-room heating sensors are created dynamically from whatever rooms
 `MeterReadings` returns for meter type `UK` — no hardcoded room names,

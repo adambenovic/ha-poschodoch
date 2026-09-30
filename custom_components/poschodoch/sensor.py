@@ -7,6 +7,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
 
+def _latest_reading(readings: list[dict]) -> dict:
+    """The most recent reading with an actual value. Today's entry can
+    still be null (meter hasn't reported yet) even though older days are
+    already available."""
+    for reading in reversed(readings):
+        if reading["consumption"] is not None:
+            return reading
+    return readings[-1]
+
+
 class _PoschodochSensorBase(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, name: str, unique_id: str) -> None:
         super().__init__(coordinator)
@@ -50,7 +60,7 @@ class DailyWaterSensor(_PoschodochSensorBase):
 
     @property
     def _latest(self):
-        return self.coordinator.data["daily_consumption"][self._code][-1]
+        return _latest_reading(self.coordinator.data["daily_consumption"][self._code])
 
     @property
     def native_value(self):
@@ -72,7 +82,9 @@ class HeatingRoomDailySensor(_PoschodochSensorBase):
 
     @property
     def _latest(self):
-        return self.coordinator.data["heating_daily_consumption"][self._room][-1]
+        return _latest_reading(
+            self.coordinator.data["heating_daily_consumption"][self._room]
+        )
 
     @property
     def native_value(self):
@@ -122,7 +134,11 @@ class RepairFundBalanceSensor(_PoschodochSensorBase):
     @property
     def extra_state_attributes(self):
         fund = self.coordinator.data["repair_fund"]
-        return {"year": fund["year"], "recent_entries": fund["recent_entries"]}
+        return {
+            "year": fund["year"],
+            "since_year": fund.get("since_year"),
+            "recent_entries": fund["recent_entries"],
+        }
 
 
 async def async_setup_entry(hass, entry, async_add_entities):

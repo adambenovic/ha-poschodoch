@@ -61,6 +61,10 @@ async def test_setup_entry_creates_working_coordinator(hass):
             "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
             payload={"RepairFund": []},
         )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2025",
+            payload={"RepairFund": []},
+        )
 
         with patch(
             "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
@@ -144,6 +148,10 @@ async def test_full_setup_creates_real_sensor_entities(hass):
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"RepairFund": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2025",
             payload={"RepairFund": []},
         )
 

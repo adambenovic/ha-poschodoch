@@ -60,6 +60,29 @@ def test_heating_room_sensor_reports_latest_day():
     assert sensor.extra_state_attributes["date"] == "2026-09-24"
 
 
+def test_daily_water_sensor_skips_trailing_null_reading():
+    """Today's reading can still be null (meter hasn't reported yet) even
+    though yesterday's is already available — show that instead of
+    'unknown'."""
+    coordinator = make_coordinator()
+    coordinator.data["daily_consumption"]["S"].append(
+        {"date": "2026-09-25", "consumption": None}
+    )
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.native_value == 290.0
+    assert sensor.extra_state_attributes["date"] == "2026-09-24"
+
+
+def test_heating_room_sensor_skips_trailing_null_reading():
+    coordinator = make_coordinator()
+    coordinator.data["heating_daily_consumption"]["Kuchyňa"].append(
+        {"date": "2026-09-25", "consumption": None}
+    )
+    sensor = HeatingRoomDailySensor(coordinator, "Kuchyňa")
+    assert sensor.native_value == 1.5
+    assert sensor.extra_state_attributes["date"] == "2026-09-24"
+
+
 def test_account_balance_sensor_reports_due_balance():
     coordinator = make_coordinator()
     sensor = AccountBalanceSensor(coordinator)
