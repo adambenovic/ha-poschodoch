@@ -26,6 +26,15 @@ class _PoschodochSensorBase(CoordinatorEntity, SensorEntity):
         self._attr_name = name
         self._attr_unique_id = unique_id
 
+    @property
+    def available(self) -> bool:
+        # The default CoordinatorEntity.available ties to whether the
+        # *last* poll succeeded — but the coordinator already keeps the
+        # last successful payload in .data through a failed update. A
+        # transient auth/API hiccup shouldn't make every sensor go
+        # unavailable; showing stale-but-real data is better than that.
+        return self.coordinator.data is not None
+
 
 class ConsumptionStatusSensor(_PoschodochSensorBase):
     """'How am I doing vs last year' indicator for water/heating."""

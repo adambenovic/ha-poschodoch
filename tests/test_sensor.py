@@ -40,6 +40,25 @@ def make_coordinator():
     return coordinator
 
 
+def test_sensor_stays_available_when_data_present_even_if_last_poll_failed():
+    """A failed poll (auth hiccup, transient API error, etc.) must not
+    make entities go unavailable — HA's own DataUpdateCoordinator already
+    keeps the last successful payload in .data through a failed update;
+    only the default available property (last_update_success-based)
+    ignores that and flips anyway."""
+    coordinator = make_coordinator()
+    coordinator.last_update_success = False
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.available is True
+
+
+def test_sensor_unavailable_when_no_data_ever_fetched():
+    coordinator = make_coordinator()
+    coordinator.data = None
+    sensor = DailyWaterSensor(coordinator, "S", "Cold water daily")
+    assert sensor.available is False
+
+
 def test_consumption_status_sensor_reports_percent_as_state():
     coordinator = make_coordinator()
     sensor = ConsumptionStatusSensor(coordinator, "S", "Cold water status")
