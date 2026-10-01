@@ -12,10 +12,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from . import statistics
 from .api import PoschodochApiClient
 from .const import (
+    CONF_DEVICE_COOKIE,
     CONF_ID_REFRESH_TOKEN,
     CONF_ID_TOKEN,
+    CONF_PASSWORD,
     CONF_REFRESH_AFTER,
     CONF_TOKEN_EXPIRES_AT,
+    CONF_USERNAME,
     DOMAIN,
 )
 from .coordinator import PoschodochDataUpdateCoordinator
@@ -45,6 +48,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         refresh_after=datetime.fromisoformat(entry.data[CONF_REFRESH_AFTER]),
         session=async_get_clientsession(hass),
         on_tokens_updated=on_tokens_updated,
+        # Only present on entries set up via email+password login — absent
+        # for existing token-paste entries, which keeps self-heal a no-op
+        # for them (unchanged behavior).
+        username=entry.data.get(CONF_USERNAME),
+        password=entry.data.get(CONF_PASSWORD),
+        device_cookie=entry.data.get(CONF_DEVICE_COOKIE),
     )
 
     coordinator = PoschodochDataUpdateCoordinator(hass, client)

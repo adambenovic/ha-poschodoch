@@ -12,6 +12,9 @@ async def test_unexpected_exception_is_logged(hass, caplog):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "manual"}
+    )
 
     with patch(
         "custom_components.poschodoch.config_flow.PoschodochApiClient.activate",

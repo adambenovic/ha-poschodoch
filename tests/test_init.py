@@ -4,6 +4,7 @@ import pytest
 from aioresponses import aioresponses
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.poschodoch.api import PoschodochApiClient
 from custom_components.poschodoch.const import DOMAIN
 
 
@@ -73,6 +74,91 @@ async def test_setup_entry_creates_working_coordinator(hass):
     assert entry.state.value == "loaded"
     coordinator = hass.data[DOMAIN][entry.entry_id]
     assert coordinator.data["account"]["due_balance"] == 0.0
+
+    with patch(
+        "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_passes_saved_password_login_fields_to_client(hass):
+    """Entries set up via email+password must have those fields (plus the
+    device-trust cookie) reach the client, since that's what gates the
+    self-heal fallback in _refresh(). Existing token-paste entries simply
+    don't have these keys at all — entry.data.get(...) returns None for
+    them, which is exactly what keeps today's behavior unchanged."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "id_token": "some-token",
+            "id_refresh_token": "some-refresh-token",
+            "token_expires_at": "2099-01-01T00:00:00+00:00",
+            "refresh_after": "2099-01-01T00:00:00+00:00",
+            "username": "user@example.com",
+            "password": "hunter2",
+            "device_cookie": "saved-cookie",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[
+                {"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."},
+                {"MenuId": 47, "MenuCode": "ConsumptionStatus", "MenuName": "..."},
+                {"MenuId": 14, "MenuCode": "MeterReadings", "MenuName": "..."},
+                {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
+                {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
+            ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U",
+            payload={"Consumption": []},
+        )
+        for type_code in ("S", "T", "U"):
+            mocked.get(
+                f"https://api.poschodoch.sk/api/Flat/ConsumptionStatus?menuId=47&type={type_code}",
+                payload={
+                    "ActualConsumption": "0",
+                    "DiffConsumption": "0",
+                    "PercConsumption": "0",
+                    "Unit": "m3",
+                },
+            )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/MeterReadings?menuId=14&disassembled=1",
+            payload={"MeterReadings": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/Account?menuId=1",
+            payload={"DueBalance": "0", "DueDate": "2026-01-01", "Account": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
+        )
+
+        with patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "custom_components.poschodoch.PoschodochApiClient",
+            wraps=PoschodochApiClient,
+        ) as mock_client_cls:
+            result = await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    assert result is True
+    assert mock_client_cls.call_args.kwargs["username"] == "user@example.com"
+    assert mock_client_cls.call_args.kwargs["password"] == "hunter2"
+    assert mock_client_cls.call_args.kwargs["device_cookie"] == "saved-cookie"
 
     with patch(
         "homeassistant.config_entries.ConfigEntries.async_unload_platforms",

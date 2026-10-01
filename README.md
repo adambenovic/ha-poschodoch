@@ -21,20 +21,38 @@ fund balance.
 Copy `custom_components/poschodoch` into your Home Assistant
 `custom_components` folder and restart.
 
-## Setup: getting your tokens
+## Setup: signing in
 
-poschodoch.sk signs you in via Google in the browser, and there's no
-practical way for Home Assistant to replay that flow itself. Instead,
-a one-time manual step hands the integration two paired credentials:
+Adding the integration (or reauthenticating later) offers a choice of
+two login methods.
+
+### Email + password (recommended)
+
+The same login as the poschodoch.sk website. An unrecognized device is
+asked for a one-time code emailed to you; once a device is recognized,
+future logins (including the automatic recovery described below) skip
+that step.
+
+Your email and password are stored in Home Assistant's local
+configuration (same storage, same trust model as the token pair the
+manual method below stores) so that re-authentication can happen
+automatically.
+
+### Paste tokens manually
+
+poschodoch.sk also signs you in via Google in the browser, and there's
+no practical way for Home Assistant to replay *that* flow itself.
+Instead, a one-time manual step hands the integration two paired
+credentials:
 
 1. Open <https://www.poschodoch.sk> in a desktop browser and sign in.
 2. Open DevTools (F12) → **Application** tab → **Local Storage** →
    `https://www.poschodoch.sk`.
 3. Copy the values of **both** `id_token` and `id_refresh_token`.
-4. In Home Assistant, add the integration and paste both values in —
-   they're required together, since renewing a session means
-   presenting the current access token (`id_token`) alongside its
-   refresh token (`id_refresh_token`).
+4. In Home Assistant, add the integration, choose "Paste tokens
+   manually", and paste both values in — they're required together,
+   since renewing a session means presenting the current access token
+   (`id_token`) alongside its refresh token (`id_refresh_token`).
 
 **Important:** copy both values *immediately before* completing setup
 and don't reuse old/noted-down values. `id_refresh_token` is a
@@ -45,8 +63,22 @@ token being expired is exactly why a refresh happens); what matters is
 that the *pair* is the most recent one your browser has, not that
 either value is individually still valid.
 
-If the integration ever shows as needing re-authentication (the token
-pair was rejected/revoked), repeat these same steps with a fresh pair.
+### If the session expires
+
+poschodoch.sk can reject the stored session at any time (observed
+live: a refresh token can be rejected well before its nominal 2-hour
+lifetime would suggest, for reasons outside this integration's
+control). What happens next depends on which login method you used:
+
+- **Email + password:** the integration logs back in automatically
+  using the saved credentials. If your device is still recognized, this
+  is silent — you won't see anything. You'll only be asked to
+  reauthenticate if the device trust itself has lapsed and a fresh
+  emailed code is required (nothing can complete that automatically,
+  since it needs a human to read the email).
+- **Manual tokens:** always requires reauthentication — repeat the
+  DevTools steps above with a fresh pair (or switch to email+password
+  during reauth to get the automatic recovery going forward).
 
 ## Sensors
 
