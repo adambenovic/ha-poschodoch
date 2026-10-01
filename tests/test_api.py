@@ -1197,3 +1197,68 @@ async def test_refresh_without_saved_credentials_raises_auth_error_as_before(
 
         with pytest.raises(PoschodochAuthError):
             await client._refresh()
+
+
+@pytest.mark.asyncio
+async def test_password_login_raises_api_error_on_server_error_status():
+    """Confirmed live: Auth/login can return a transient 502 (backend
+    hiccup) during a self-heal attempt. That must not be treated the same
+    as a genuine credential/device-trust rejection — a 5xx says nothing
+    about whether the password or device cookie are actually valid."""
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                status=502,
+                payload={"error": "Bad Gateway"},
+            )
+            with pytest.raises(PoschodochApiError):
+                await _password_login(session, "user@example.com", "hunter2")
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_refresh_raises_api_error_on_server_error_status(client_factory):
+    """Same principle for Auth/refresh itself: a 5xx is a transient
+    problem, not proof the refresh token was rejected."""
+    client = client_factory(username="user@example.com", password="hunter2")
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=503,
+            payload={"error": "Service Unavailable"},
+        )
+        with pytest.raises(PoschodochApiError):
+            await client._refresh()
+
+        # No point hammering Auth/login too while the service is down.
+        login_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/login"))
+        assert login_key not in mocked.requests
+
+
+@pytest.mark.asyncio
+async def test_refresh_fallback_raises_api_error_when_login_hits_server_error(
+    client_factory,
+):
+    """The refresh token itself can be genuinely rejected (4xx) while the
+    self-heal's own Auth/login call separately hits a transient 5xx — that
+    combination must still surface as retryable, not as "needs 2FA"."""
+    client = client_factory(
+        username="user@example.com", password="hunter2", device_cookie="saved-cookie"
+    )
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token"},
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/login",
+            status=502,
+            payload={"error": "Bad Gateway"},
+        )
+
+        with pytest.raises(PoschodochApiError):
+            await client._refresh()

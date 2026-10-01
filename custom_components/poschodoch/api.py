@@ -75,6 +75,11 @@ async def _password_login(
             _LOGGER.debug(
                 "Auth/login rejected with status %s: %s", resp.status, error_body
             )
+            if resp.status >= 500:
+                # A server-side hiccup says nothing about whether the
+                # password/device_cookie are actually valid — must not be
+                # read as "this device needs 2FA" or "credentials wrong."
+                raise PoschodochApiError(f"Auth/login failed (status {resp.status})")
             raise PoschodochAuthError(f"Login rejected (status {resp.status})")
         body = await resp.json(content_type=None)
 
@@ -331,6 +336,12 @@ class PoschodochApiClient:
                 )
 
         if status != 200:
+            if status >= 500:
+                # A server-side hiccup, not proof the refresh token itself
+                # was rejected — don't force reauth over it, and don't
+                # bother falling through to self-heal either, since
+                # Auth/login is just as likely hitting the same outage.
+                raise PoschodochApiError(f"Auth/refresh failed (status {status})")
             # A recognized device (saved email+password+device_cookie) can
             # log back in without a 2FA prompt — the whole reason to save
             # those at all. Entries set up via the manual token-paste

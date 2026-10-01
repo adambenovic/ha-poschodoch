@@ -168,3 +168,16 @@ async def test_coordinator_survives_rolling_averages_failure(hass):
 
     assert coordinator.last_exception is None
     assert coordinator.data["rolling_averages"] == {}
+
+
+@pytest.mark.asyncio
+async def test_coordinator_raises_update_failed_not_auth_failed_on_transient_api_error(hass):
+    """PoschodochApiError (e.g. a transient 5xx from the server) must be
+    treated as a normal retryable failure, not force a reauth flow — only
+    a genuine PoschodochAuthError should do that."""
+    from custom_components.poschodoch.api import PoschodochApiError
+
+    client = make_fake_client()
+    client.get_daily_consumption.side_effect = PoschodochApiError("server error")
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
