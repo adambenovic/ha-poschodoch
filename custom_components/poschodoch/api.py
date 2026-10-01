@@ -43,6 +43,52 @@ def _to_float(value: str | float | None) -> float | None:
     return None if value is None else float(value)
 
 
+async def _password_login(
+    session: aiohttp.ClientSession,
+    username: str,
+    password: str,
+    two_factor_code: str | None = None,
+    device_cookie: str | None = None,
+) -> dict:
+    """Email+password login, confirmed via a captured real browser login.
+
+    An unrecognized device gets back {"requiresTwoFactor": true} (the
+    server emails a code as a side effect) instead of tokens. Passing the
+    device_cookie from a previous successful login lets a *recognized*
+    device skip that 2FA step entirely — the whole point of saving it.
+    Auth/changeunit is still required afterward, same as after a token
+    refresh; callers handle that themselves."""
+    async with session.post(
+        f"{BASE_URL}Auth/login",
+        data=json.dumps(
+            {
+                "UserName": username,
+                "Password": password,
+                "Cookie": device_cookie,
+                "TwoFactorCode": two_factor_code,
+            }
+        ),
+        headers={"Content-Type": "application/json"},
+    ) as resp:
+        if resp.status != 200:
+            error_body = await resp.text()
+            _LOGGER.debug(
+                "Auth/login rejected with status %s: %s", resp.status, error_body
+            )
+            raise PoschodochAuthError(f"Login rejected (status {resp.status})")
+        body = await resp.json(content_type=None)
+
+    if body.get("requiresTwoFactor"):
+        return {"requires_two_factor": True}
+    return {
+        "requires_two_factor": False,
+        "auth_token": body["auth_token"],
+        "refresh_token": body["refresh_token"],
+        "expires_in": body["expires_in"],
+        "device_cookie": body.get("cookie"),
+    }
+
+
 class PoschodochApiClient:
     """Talks to the poschodoch.sk backend."""
 
@@ -54,6 +100,9 @@ class PoschodochApiClient:
         refresh_after: datetime,
         session: aiohttp.ClientSession | None = None,
         on_tokens_updated: Callable[[str, str], Awaitable[None]] | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        device_cookie: str | None = None,
     ) -> None:
         self._id_token = id_token
         self._id_refresh_token = id_refresh_token
@@ -62,6 +111,11 @@ class PoschodochApiClient:
         self._owns_session = session is None
         self._session = session or aiohttp.ClientSession()
         self._on_tokens_updated = on_tokens_updated
+        # Only set for entries created via email+password login — their
+        # absence is what gates the self-heal fallback in _refresh().
+        self._username = username
+        self._password = password
+        self._device_cookie = device_cookie
         self._menu_map: dict[str, int] | None = None
         self._menu_map_fetched_at: datetime | None = None
         self._portal_id: int | None = None
@@ -79,12 +133,15 @@ class PoschodochApiClient:
         token_expires_at, refresh_after) so a caller can spread it
         straight into an update instead of reaching into private
         attributes."""
-        return {
+        state = {
             "id_token": self._id_token,
             "id_refresh_token": self._id_refresh_token,
             "token_expires_at": self._token_expires_at.isoformat(),
             "refresh_after": self._refresh_after.isoformat(),
         }
+        if self._device_cookie is not None:
+            state["device_cookie"] = self._device_cookie
+        return state
 
     async def get_menu_map(self) -> dict[str, int]:
         now = datetime.now(timezone.utc)
@@ -264,17 +321,25 @@ class PoschodochApiClient:
                 "Authorization": f"Bearer {self._id_token}",
             },
         ) as resp:
-            if resp.status != 200:
+            status = resp.status
+            if status == 200:
+                body = await resp.json(content_type=None)
+            else:
                 error_body = await resp.text()
                 _LOGGER.debug(
-                    "Auth/refresh rejected with status %s: %s",
-                    resp.status,
-                    error_body,
+                    "Auth/refresh rejected with status %s: %s", status, error_body
                 )
-                raise PoschodochAuthError(
-                    f"Refresh token rejected (status {resp.status})"
-                )
-            body = await resp.json(content_type=None)
+
+        if status != 200:
+            # A recognized device (saved email+password+device_cookie) can
+            # log back in without a 2FA prompt — the whole reason to save
+            # those at all. Entries set up via the manual token-paste
+            # method have no username/password stored, so this is a no-op
+            # for them and behavior is unchanged: raise straight away.
+            if self._username and self._password:
+                await self._login_with_saved_credentials()
+                return
+            raise PoschodochAuthError(f"Refresh token rejected (status {status})")
 
         # This intermediate token authenticates but is not yet bound to a
         # unit/portal — Dashboard/Flat/Object endpoints will 401 until
@@ -282,6 +347,31 @@ class PoschodochApiClient:
         # every login. Set it now so the two calls below can use it.
         self._id_token = body["auth_token"]
         self._id_refresh_token = body["refresh_token"]
+
+        await self._activate_unit()
+
+    async def _login_with_saved_credentials(self) -> None:
+        """Fallback when the refresh token itself is rejected: if this
+        device is still recognized, Auth/login succeeds without a 2FA
+        prompt. Otherwise there's no human present during a background
+        poll to supply a fresh code, so this surfaces as the same
+        PoschodochAuthError the caller already handles — still correctly
+        flows into HA's reauth UI, which also offers this login method."""
+        result = await _password_login(
+            self._session,
+            self._username,
+            self._password,
+            device_cookie=self._device_cookie,
+        )
+        if result["requires_two_factor"]:
+            raise PoschodochAuthError(
+                "Session expired and this device is no longer recognized; "
+                "2FA required"
+            )
+        self._id_token = result["auth_token"]
+        self._id_refresh_token = result["refresh_token"]
+        if result["device_cookie"]:
+            self._device_cookie = result["device_cookie"]
 
         await self._activate_unit()
 

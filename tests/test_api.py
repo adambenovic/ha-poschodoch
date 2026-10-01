@@ -13,6 +13,7 @@ from yarl import URL
 from custom_components.poschodoch.api import (
     PoschodochApiClient,
     PoschodochApiError,
+    _password_login,
     PoschodochAuthError,
 )
 
@@ -976,3 +977,223 @@ async def test_activate_skips_auth_refresh_and_binds_a_fresh_login_token(
     unit_list_key = ("GET", URL("https://api.poschodoch.sk/api/Auth/UnitList/"))
     unit_list_call = mocked.requests[unit_list_key][0]
     assert unit_list_call.kwargs["headers"]["Authorization"] == "Bearer fresh-login-token"
+
+
+@pytest.mark.asyncio
+async def test_password_login_returns_requires_two_factor_for_unrecognized_device():
+    """Confirmed via a captured real login: an unrecognized device gets
+    {"requiresTwoFactor": true} back (the server emails a code as a side
+    effect) instead of tokens."""
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                payload={"requiresTwoFactor": True},
+            )
+            result = await _password_login(session, "user@example.com", "hunter2")
+    finally:
+        await session.close()
+
+    assert result == {"requires_two_factor": True}
+
+
+@pytest.mark.asyncio
+async def test_password_login_returns_tokens_on_success():
+    """Shape mirrors Auth/refresh's response, plus username/cookie — the
+    cookie is what lets a future login skip 2FA for this same device."""
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                payload={
+                    "auth_token": "fresh-token",
+                    "refresh_token": "fresh-refresh-token",
+                    "expires_in": 7200,
+                    "username": "user@example.com",
+                    "cookie": "device-trust-cookie",
+                },
+            )
+            result = await _password_login(
+                session, "user@example.com", "hunter2", two_factor_code="552544"
+            )
+    finally:
+        await session.close()
+
+    assert result == {
+        "requires_two_factor": False,
+        "auth_token": "fresh-token",
+        "refresh_token": "fresh-refresh-token",
+        "expires_in": 7200,
+        "device_cookie": "device-trust-cookie",
+    }
+
+
+@pytest.mark.asyncio
+async def test_password_login_sends_credentials_and_device_cookie_in_body():
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                payload={"requiresTwoFactor": True},
+            )
+            await _password_login(
+                session,
+                "user@example.com",
+                "hunter2",
+                two_factor_code="552544",
+                device_cookie="saved-cookie",
+            )
+
+            key = ("POST", URL("https://api.poschodoch.sk/api/Auth/login"))
+            call = mocked.requests[key][0]
+            assert json.loads(call.kwargs["data"]) == {
+                "UserName": "user@example.com",
+                "Password": "hunter2",
+                "Cookie": "saved-cookie",
+                "TwoFactorCode": "552544",
+            }
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_password_login_raises_auth_error_on_non_200():
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                status=400,
+                payload={"error": "Invalid credentials"},
+            )
+            with pytest.raises(PoschodochAuthError):
+                await _password_login(session, "user@example.com", "wrong-password")
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_password_login_logs_raw_server_response_at_debug_level_on_error(caplog):
+    """Same generic-message / DEBUG-only-body principle as the existing
+    Auth/refresh and request() error paths — the raw server text ends up
+    in HA's logs, which users routinely share publicly for support."""
+    session = aiohttp.ClientSession()
+    try:
+        with aioresponses() as mocked:
+            mocked.post(
+                "https://api.poschodoch.sk/api/Auth/login",
+                status=400,
+                payload={"error": "Invalid credentials(1)"},
+            )
+            with caplog.at_level(logging.DEBUG, logger="custom_components.poschodoch.api"):
+                with pytest.raises(PoschodochAuthError) as exc_info:
+                    await _password_login(session, "user@example.com", "wrong-password")
+    finally:
+        await session.close()
+
+    assert "Invalid credentials(1)" not in str(exc_info.value)
+    assert "Invalid credentials(1)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_token_state_includes_device_cookie_when_set(client_factory):
+    client = client_factory(device_cookie="saved-cookie")
+    assert client.token_state["device_cookie"] == "saved-cookie"
+
+
+@pytest.mark.asyncio
+async def test_refresh_falls_back_to_password_login_when_refresh_token_rejected(
+    client_factory,
+):
+    """The whole point of self-heal: when the refresh token itself is
+    rejected (the scenario that previously always forced a manual
+    reauth), a recognized device can log back in silently via saved
+    email+password+device_cookie instead."""
+    client = client_factory(
+        username="user@example.com", password="hunter2", device_cookie="saved-cookie"
+    )
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token"},
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/login",
+            payload={
+                "auth_token": "login-token",
+                "refresh_token": "login-refresh-token",
+                "expires_in": 7200,
+                "cookie": "rotated-cookie",
+            },
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/changeunit?portalId=78159",
+            payload={
+                "auth_token": "activated-token",
+                "refresh_token": "activated-refresh-token",
+                "expires_in": 7200,
+            },
+        )
+
+        await client._refresh()
+
+    assert client._id_token == "activated-token"
+    assert client._id_refresh_token == "activated-refresh-token"
+    assert client._device_cookie == "rotated-cookie"
+
+    login_key = ("POST", URL("https://api.poschodoch.sk/api/Auth/login"))
+    login_call = mocked.requests[login_key][0]
+    assert json.loads(login_call.kwargs["data"]) == {
+        "UserName": "user@example.com",
+        "Password": "hunter2",
+        "Cookie": "saved-cookie",
+        "TwoFactorCode": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_refresh_raises_auth_error_when_fallback_login_also_needs_two_factor(
+    client_factory,
+):
+    """No human is present during a background poll to answer a fresh 2FA
+    code, so a lapsed device trust still surfaces as the same
+    PoschodochAuthError (-> HA's reauth flow), not a silent crash."""
+    client = client_factory(
+        username="user@example.com", password="hunter2", device_cookie="stale-cookie"
+    )
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token"},
+        )
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/login",
+            payload={"requiresTwoFactor": True},
+        )
+
+        with pytest.raises(PoschodochAuthError):
+            await client._refresh()
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_saved_credentials_raises_auth_error_as_before(
+    client_factory,
+):
+    """Existing token-paste entries have no username/password stored —
+    must behave exactly as before, not attempt a password login with
+    None/None."""
+    client = client_factory()
+    with aioresponses() as mocked:
+        mocked.post(
+            "https://api.poschodoch.sk/api/Auth/refresh",
+            status=400,
+            payload={"error": "Invalid refresh token"},
+        )
+
+        with pytest.raises(PoschodochAuthError):
+            await client._refresh()
