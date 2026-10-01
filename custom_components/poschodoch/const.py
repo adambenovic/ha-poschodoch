@@ -14,4 +14,9 @@ CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_DEVICE_COOKIE = "device_cookie"
 
-DEFAULT_SCAN_INTERVAL_HOURS = 1
+# Polling is anchored to a fixed local time rather than a fixed interval
+# (poschodoch.sk's data is daily-granularity anyway, and there's no
+# benefit to hammering it hourly) — see async_track_time_change in
+# __init__.py. The one-time statistics backfill is unaffected, it's a
+# separate background task.
+DAILY_POLL_HOUR = 6

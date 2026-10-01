@@ -93,8 +93,15 @@ control). What happens next depends on which login method you used:
 | Account balance | Current balance due/credit (EUR) | `due_date`, `last_payment_amount`, `last_payment_date` |
 | Repair fund balance | The fund's lifetime balance (EUR), not scoped to the current year | `since_year`, `recent_entries` |
 
-Data refreshes hourly. `average_last_30_days` is a genuine trailing
-30-day daily average (see below), not a single day's reading.
+Data refreshes once a day, at 6am local time (poschodoch.sk's own data
+is daily-granularity, so polling more often than that wouldn't surface
+anything new). `average_last_30_days` is a genuine trailing 30-day
+daily average (see below), not a single day's reading.
+
+If a poll fails for any reason (an expired session, a transient server
+error), sensors keep showing their last known values rather than going
+unavailable — they just won't have anything newer until the next
+successful poll.
 
 ## Long-term statistics
 
@@ -111,7 +118,7 @@ happens automatically and needs no configuration:
   request per month of history, but it doesn't block the integration
   from loading — sensors work immediately, the backfill just fills in
   behind them.
-- **Ongoing sync.** Every hourly poll imports whatever new days aren't
+- **Ongoing sync.** Every daily poll imports whatever new days aren't
   in long-term statistics yet, so the history stays current without
   repeating the full backfill.
 

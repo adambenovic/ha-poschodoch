@@ -1,11 +1,11 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioresponses import aioresponses
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.poschodoch.api import PoschodochApiClient
-from custom_components.poschodoch.const import DOMAIN
+from custom_components.poschodoch.const import DAILY_POLL_HOUR, DOMAIN
 
 
 @pytest.mark.asyncio
@@ -80,6 +80,90 @@ async def test_setup_entry_creates_working_coordinator(hass):
         new=AsyncMock(return_value=True),
     ):
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_schedules_daily_refresh_at_fixed_local_time(hass):
+    """Polling is anchored to a fixed local time (not a plain interval,
+    which can't express "once a day at 6am") and the listener must be
+    torn down on unload, not leaked."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "id_token": "some-token",
+            "id_refresh_token": "some-refresh-token",
+            "token_expires_at": "2099-01-01T00:00:00+00:00",
+            "refresh_after": "2099-01-01T00:00:00+00:00",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with aioresponses() as mocked:
+        mocked.get(
+            "https://api.poschodoch.sk/api/Dashboard/Menu",
+            payload=[
+                {"MenuId": 41, "MenuCode": "DailyConsumption", "MenuName": "..."},
+                {"MenuId": 47, "MenuCode": "ConsumptionStatus", "MenuName": "..."},
+                {"MenuId": 14, "MenuCode": "MeterReadings", "MenuName": "..."},
+                {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
+                {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
+            ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U",
+            payload={"Consumption": []},
+        )
+        for type_code in ("S", "T", "U"):
+            mocked.get(
+                f"https://api.poschodoch.sk/api/Flat/ConsumptionStatus?menuId=47&type={type_code}",
+                payload={
+                    "ActualConsumption": "0",
+                    "DiffConsumption": "0",
+                    "PercConsumption": "0",
+                    "Unit": "m3",
+                },
+            )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/MeterReadings?menuId=14&disassembled=1",
+            payload={"MeterReadings": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/Account?menuId=1",
+            payload={"DueBalance": "0", "DueDate": "2026-01-01", "Account": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Object/RepairFund?menuId=20&year=2026",
+            payload={"YearFrom": 2026, "YearTo": 2026, "FinalBalance": "0", "RepairFund": []},
+        )
+
+        unsub = MagicMock()
+        with patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "custom_components.poschodoch.async_track_time_change",
+            return_value=unsub,
+        ) as mock_track:
+            result = await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+
+    assert result is True
+    assert mock_track.call_args.kwargs["hour"] == DAILY_POLL_HOUR
+    assert mock_track.call_args.kwargs["minute"] == 0
+    assert mock_track.call_args.kwargs["second"] == 0
+    assert unsub in entry._on_unload
+
+    with patch(
+        "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+        new=AsyncMock(return_value=True),
+    ):
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+    unsub.assert_called_once()
 
 
 @pytest.mark.asyncio

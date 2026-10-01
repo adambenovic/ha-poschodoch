@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
 
 from . import statistics
 from .api import PoschodochApiClient
@@ -19,6 +20,7 @@ from .const import (
     CONF_REFRESH_AFTER,
     CONF_TOKEN_EXPIRES_AT,
     CONF_USERNAME,
+    DAILY_POLL_HOUR,
     DOMAIN,
 )
 from .coordinator import PoschodochDataUpdateCoordinator
@@ -61,6 +63,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    async def _scheduled_refresh(_now) -> None:
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(
+        async_track_time_change(
+            hass, _scheduled_refresh, hour=DAILY_POLL_HOUR, minute=0, second=0
+        )
+    )
 
     async def _run_backfill() -> None:
         try:

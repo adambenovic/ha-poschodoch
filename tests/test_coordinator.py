@@ -181,3 +181,17 @@ async def test_coordinator_raises_update_failed_not_auth_failed_on_transient_api
     client.get_daily_consumption.side_effect = PoschodochApiError("server error")
     coordinator = PoschodochDataUpdateCoordinator(hass, client)
 
+    await coordinator.async_refresh()
+
+    assert isinstance(coordinator.last_exception, UpdateFailed)
+
+
+@pytest.mark.asyncio
+async def test_coordinator_has_no_fixed_update_interval(hass):
+    """Polling is scheduled explicitly at a fixed local time instead (see
+    async_track_time_change in __init__.py) — a plain interval can't
+    express "once a day at a specific hour."""
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    assert coordinator.update_interval is None

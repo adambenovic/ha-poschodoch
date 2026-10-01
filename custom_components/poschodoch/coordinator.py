@@ -1,7 +1,6 @@
 """Data update coordinator for poschodoch.sk."""
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -10,7 +9,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from . import statistics
 from .api import PoschodochApiClient, PoschodochAuthError
-from .const import DEFAULT_SCAN_INTERVAL_HOURS, DOMAIN
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,12 +20,11 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
     """Fetches all poschodoch.sk data on one schedule."""
 
     def __init__(self, hass: HomeAssistant, client: PoschodochApiClient) -> None:
-        super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(hours=DEFAULT_SCAN_INTERVAL_HOURS),
-        )
+        # No update_interval: polling is scheduled explicitly at a fixed
+        # local time instead (see async_track_time_change in __init__.py),
+        # since a plain interval can't anchor to a wall-clock time and
+        # there's no benefit to polling daily-granularity data hourly.
+        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=None)
         self.client = client
 
     async def _async_update_data(self) -> dict:
