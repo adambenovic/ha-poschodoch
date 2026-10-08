@@ -19,8 +19,8 @@ from typing import Awaitable, Callable
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
-    get_last_statistics,
     statistic_during_period,
+    statistics_during_period,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.util import slugify
@@ -252,45 +252,51 @@ async def async_backfill(hass: HomeAssistant, entry, client) -> None:
     )
 
 
-async def _last_statistic(hass: HomeAssistant, statistic_id: str) -> tuple[datetime, float] | None:
-    """get_last_statistics does blocking database I/O — must go through
-    the executor, never called directly from the event loop.
+async def _sum_before(hass: HomeAssistant, statistic_id: str, before: datetime) -> float:
+    """The running sum as of just before `before` — the anchor to
+    recompute cumulative sums from when resyncing a window. Does
+    blocking database I/O, same as the other recorder calls here — must
+    go through the executor.
 
-    Confirmed against HA source: "start" isn't a valid member of the
-    types param (only last_reset/max/mean/min/state/sum are) — every
-    returned row carries "start" regardless of what's requested, but
-    passing it anyway defeats the recorder's sum-only fast path for no
-    benefit. Confirmed live: rows' "start" is a float Unix timestamp
-    (seconds), not a datetime — StatisticsRow's actual, longstanding
-    shape."""
+    0.0 if there's no earlier statistic yet (brand new series, or before
+    its first recorded day)."""
     result = await hass.async_add_executor_job(
-        get_last_statistics, hass, 1, statistic_id, True, {"sum"}
+        statistics_during_period,
+        hass,
+        datetime.min.replace(tzinfo=timezone.utc),
+        before,
+        {statistic_id},
+        "day",
+        None,
+        {"sum"},
     )
     rows = result.get(statistic_id)
-    if not rows:
-        return None
-    return datetime.fromtimestamp(rows[0]["start"], tz=timezone.utc), rows[0]["sum"]
+    return rows[-1]["sum"] if rows else 0.0
 
 
 async def _sync_one_series(
     hass: HomeAssistant, statistic_id: str, name: str, unit: str | None, entries: list[dict]
 ) -> None:
-    last = await _last_statistic(hass, statistic_id)
-    last_start, start_sum = last if last is not None else (None, 0.0)
+    """Resyncs the *entire* window of entries handed in (current +
+    previous month, from the coordinator) rather than only whatever's
+    after the single latest recorded point.
 
-    new_entries = [
-        e
-        for e in sorted(entries, key=lambda e: e["date"])
-        if last_start is None
-        or datetime(
-            *(int(p) for p in e["date"].split("-")[:3]), tzinfo=timezone.utc
-        )
-        > last_start
-    ]
-    if not new_entries:
-        return
+    Confirmed live: poschodoch.sk can finalize a day's consumption well
+    after later days already have real values (a run of days stayed
+    null through the one-time backfill, then were filled in with real
+    numbers after the calendar had already moved on) — comparing against
+    only the latest recorded date would wrongly treat that earlier hole
+    as already synced forever. Anchoring at the sum just before the
+    window and recomputing+resubmitting the whole thing is safe:
+    async_add_external_statistics upserts by (statistic_id, start), so
+    resubmitting an unchanged day is a harmless no-op."""
+    sorted_entries = sorted(entries, key=lambda e: e["date"])
+    window_start = datetime(
+        *(int(p) for p in sorted_entries[0]["date"].split("-")[:3]), tzinfo=timezone.utc
+    )
+    start_sum = await _sum_before(hass, statistic_id, window_start)
 
-    points = _build_statistics(new_entries, start_sum)
+    points = _build_statistics(sorted_entries, start_sum)
     if not points:
         return
 

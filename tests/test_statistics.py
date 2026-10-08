@@ -325,30 +325,39 @@ async def test_async_backfill_skips_if_already_backfilled(hass):
 
 
 @pytest.mark.asyncio
-async def test_async_sync_latest_reads_last_statistic_via_executor(hass):
-    """get_last_statistics does blocking database I/O — confirmed live
-    that HA's recorder raises RuntimeError if it's called directly from
-    the event loop instead of via hass.async_add_executor_job."""
+async def test_async_sync_latest_reads_anchor_sum_via_executor(hass):
+    """statistics_during_period does blocking database I/O — confirmed
+    live that HA's recorder raises RuntimeError if it's called directly
+    from the event loop instead of via hass.async_add_executor_job."""
     daily_consumption = {"S": [{"date": "2026-09-24", "consumption": 10.0}]}
 
     async def fake_executor_job(func, *args):
         return func(*args)
 
     with patch(
-        "custom_components.poschodoch.statistics.get_last_statistics",
+        "custom_components.poschodoch.statistics.statistics_during_period",
         return_value={},
-    ) as mock_get_last, patch(
+    ) as mock_stats_during_period, patch(
         "custom_components.poschodoch.statistics.async_add_external_statistics"
     ), patch.object(
         hass, "async_add_executor_job", side_effect=fake_executor_job
     ) as mock_executor_job:
         await stats.async_sync_latest(hass, daily_consumption, {})
 
-    mock_executor_job.assert_called_once_with(mock_get_last, hass, 1, f"{DOMAIN}:cold_water_daily", True, {"sum"})
+    mock_executor_job.assert_called_once_with(
+        mock_stats_during_period,
+        hass,
+        datetime.min.replace(tzinfo=timezone.utc),
+        datetime(2026, 9, 24, tzinfo=timezone.utc),
+        {f"{DOMAIN}:cold_water_daily"},
+        "day",
+        None,
+        {"sum"},
+    )
 
 
 @pytest.mark.asyncio
-async def test_async_sync_latest_imports_only_new_entries(hass):
+async def test_async_sync_latest_recomputes_cumulative_sum_from_anchor(hass):
     daily_consumption = {
         "S": [
             {"date": "2026-09-24", "consumption": 10.0},
@@ -356,16 +365,17 @@ async def test_async_sync_latest_imports_only_new_entries(hass):
         ]
     }
 
-    def fake_last_stats(hass_, n, statistic_id, convert_units, types):
+    def fake_stats_during_period(hass_, start, end, statistic_ids, period, units, types):
+        statistic_id = next(iter(statistic_ids))
         return {
             statistic_id: [
-                {"start": datetime(2026, 9, 24, tzinfo=timezone.utc).timestamp(), "sum": 10.0}
+                {"start": datetime(2026, 9, 23, tzinfo=timezone.utc).timestamp(), "sum": 100.0}
             ]
         }
 
     with patch(
-        "custom_components.poschodoch.statistics.get_last_statistics",
-        side_effect=fake_last_stats,
+        "custom_components.poschodoch.statistics.statistics_during_period",
+        side_effect=fake_stats_during_period,
     ), patch(
         "custom_components.poschodoch.statistics.async_add_external_statistics"
     ) as mock_add_stats:
@@ -375,43 +385,61 @@ async def test_async_sync_latest_imports_only_new_entries(hass):
     _, metadata, points = mock_add_stats.call_args.args
     assert metadata["statistic_id"] == f"{DOMAIN}:cold_water_daily"
     points = list(points)
-    assert len(points) == 1
-    assert points[0]["start"] == datetime(2026, 9, 25, tzinfo=timezone.utc)
-    assert points[0]["sum"] == 15.0
+    assert len(points) == 2
+    assert points[0]["start"] == datetime(2026, 9, 24, tzinfo=timezone.utc)
+    assert points[0]["sum"] == 110.0
+    assert points[1]["start"] == datetime(2026, 9, 25, tzinfo=timezone.utc)
+    assert points[1]["sum"] == 115.0
 
 
 @pytest.mark.asyncio
-async def test_async_sync_latest_does_nothing_when_no_new_entries(hass):
-    daily_consumption = {"S": [{"date": "2026-09-24", "consumption": 10.0}]}
+async def test_async_sync_latest_fills_a_hole_left_by_a_previously_null_day(hass):
+    """Regression test for the live bug: poschodoch.sk finalized Sep 24's
+    consumption only after Sep 30 already had a real value recorded,
+    because Sep 24 was still null on the poll that happened to run
+    first. Resyncing the whole window (anchored before Sep 24, not just
+    "after the latest recorded date") must fill that hole in and shift
+    everything after it to the now-correct running total."""
+    daily_consumption = {
+        "S": [
+            {"date": "2026-09-23", "consumption": 290.0},  # already recorded
+            {"date": "2026-09-24", "consumption": 124.0},  # the hole, now real
+            {"date": "2026-09-30", "consumption": 297.0},  # already recorded (wrongly, as if it were the day right after the 23rd)
+        ]
+    }
 
-    def fake_last_stats(hass_, n, statistic_id, convert_units, types):
+    def fake_stats_during_period(hass_, start, end, statistic_ids, period, units, types):
+        statistic_id = next(iter(statistic_ids))
         return {
             statistic_id: [
-                {"start": datetime(2026, 9, 24, tzinfo=timezone.utc).timestamp(), "sum": 10.0}
+                {"start": datetime(2026, 9, 22, tzinfo=timezone.utc).timestamp(), "sum": 1000.0}
             ]
         }
 
     with patch(
-        "custom_components.poschodoch.statistics.get_last_statistics",
-        side_effect=fake_last_stats,
+        "custom_components.poschodoch.statistics.statistics_during_period",
+        side_effect=fake_stats_during_period,
     ), patch(
         "custom_components.poschodoch.statistics.async_add_external_statistics"
     ) as mock_add_stats:
         await stats.async_sync_latest(hass, daily_consumption, {})
 
-    mock_add_stats.assert_not_called()
+    _, _, points = mock_add_stats.call_args.args
+    points = list(points)
+    assert [p["start"].day for p in points] == [23, 24, 30]
+    assert [p["sum"] for p in points] == [1290.0, 1414.0, 1711.0]
 
 
 @pytest.mark.asyncio
 async def test_async_sync_latest_starts_from_zero_when_no_prior_statistics(hass):
     daily_consumption = {"S": [{"date": "2026-09-24", "consumption": 10.0}]}
 
-    def fake_last_stats(hass_, n, statistic_id, convert_units, types):
+    def fake_stats_during_period(hass_, start, end, statistic_ids, period, units, types):
         return {}
 
     with patch(
-        "custom_components.poschodoch.statistics.get_last_statistics",
-        side_effect=fake_last_stats,
+        "custom_components.poschodoch.statistics.statistics_during_period",
+        side_effect=fake_stats_during_period,
     ), patch(
         "custom_components.poschodoch.statistics.async_add_external_statistics"
     ) as mock_add_stats:
@@ -420,6 +448,24 @@ async def test_async_sync_latest_starts_from_zero_when_no_prior_statistics(hass)
     _, _, points = mock_add_stats.call_args.args
     points = list(points)
     assert points[0]["sum"] == 10.0
+
+
+@pytest.mark.asyncio
+async def test_async_sync_latest_does_nothing_when_all_entries_are_null(hass):
+    """The one truly no-op case left: a future, not-yet-billed day with
+    no real data at all — _build_statistics already skips null entries,
+    so there's nothing to submit."""
+    daily_consumption = {"S": [{"date": "2026-09-24", "consumption": None}]}
+
+    with patch(
+        "custom_components.poschodoch.statistics.statistics_during_period",
+        return_value={},
+    ), patch(
+        "custom_components.poschodoch.statistics.async_add_external_statistics"
+    ) as mock_add_stats:
+        await stats.async_sync_latest(hass, daily_consumption, {})
+
+    mock_add_stats.assert_not_called()
 
 
 @pytest.mark.asyncio

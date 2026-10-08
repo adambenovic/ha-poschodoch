@@ -53,15 +53,11 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
             # in with real values after the calendar had already rolled
             # into October — and since ongoing sync only ever looked at
             # the *current* month, those days were never revisited).
-            # Fetching last month too lets the existing sync logic, which
-            # already only imports newer-than-last-synced entries, pick
-            # up anything that was null last time but has since finalized.
-            _prev_water = await self.client.get_daily_consumption(prev_year, prev_month)
-            _LOGGER.warning(
-                "DIAGNOSTIC previous-month water (%s-%s): %s", prev_year, prev_month, _prev_water
-            )
+            # Fetching last month too, and resyncing the whole window
+            # (statistics.py's job), lets any day that was null last time
+            # but has since finalized get picked up automatically.
             daily_consumption = _merge_series(
-                _prev_water,
+                await self.client.get_daily_consumption(prev_year, prev_month),
                 await self.client.get_daily_consumption(),
             )
             heating_daily_consumption = _merge_series(
