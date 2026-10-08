@@ -119,8 +119,11 @@ happens automatically and needs no configuration:
   from loading — sensors work immediately, the backfill just fills in
   behind them.
 - **Ongoing sync.** Every daily poll imports whatever new days aren't
-  in long-term statistics yet, so the history stays current without
-  repeating the full backfill.
+  in long-term statistics yet, checking both the current and previous
+  calendar month — poschodoch.sk can take several days to finalize
+  recent consumption figures, so a day that was still blank on an
+  earlier poll gets picked up automatically once it's available,
+  without needing a fresh backfill.
 
 The imported statistics are separate entities from the sensors, named
 `poschodoch:cold_water_daily`, `poschodoch:hot_water_daily`, and

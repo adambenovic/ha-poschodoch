@@ -8,20 +8,36 @@ from custom_components.poschodoch.api import PoschodochAuthError
 from custom_components.poschodoch.coordinator import PoschodochDataUpdateCoordinator
 
 
+CURRENT_MONTH_DAILY_CONSUMPTION = {
+    "S": [{"date": "2026-09-24", "consumption": 290.0}],
+    "T": [{"date": "2026-09-24", "consumption": 54.0}],
+}
+CURRENT_MONTH_HEATING_CONSUMPTION = {
+    "Kuchyňa": [{"date": "2026-09-24", "consumption": 1.5}],
+}
+
+
 def make_fake_client():
     client = AsyncMock()
-    client.get_daily_consumption.return_value = {
-        "S": [{"date": "2026-09-24", "consumption": 290.0}],
-        "T": [{"date": "2026-09-24", "consumption": 54.0}],
-    }
+
+    # Only the no-args call (current month) returns the fixture data —
+    # the previous-month call (always made too, to catch data that was
+    # still null last time but has since been finalized) returns nothing,
+    # matching the common case and keeping existing tests' expectations
+    # on daily_consumption/heating_daily_consumption unchanged.
+    async def get_daily_consumption(year=None, month=None):
+        return CURRENT_MONTH_DAILY_CONSUMPTION if year is None else {}
+
+    async def get_heating_daily_consumption(year=None, month=None):
+        return CURRENT_MONTH_HEATING_CONSUMPTION if year is None else {}
+
+    client.get_daily_consumption.side_effect = get_daily_consumption
+    client.get_heating_daily_consumption.side_effect = get_heating_daily_consumption
     client.get_consumption_status.side_effect = lambda type_code: {
         "S": {"actual_consumption": 38.28, "diff_consumption": 8.65, "percent_consumption": 29.0, "unit": "m3"},
         "T": {"actual_consumption": 10.0, "diff_consumption": 1.0, "percent_consumption": 5.0, "unit": "m3"},
         "U": {"actual_consumption": 644.0, "diff_consumption": -161.0, "percent_consumption": -20.0, "unit": "d./kWh"},
     }[type_code]
-    client.get_heating_daily_consumption.return_value = {
-        "Kuchyňa": [{"date": "2026-09-24", "consumption": 1.5}],
-    }
     client.get_meter_readings.return_value = [
         {"meter_id": 1, "meter_number": "abc", "meter_type": "UK", "room": "Kuchyňa"},
     ]
@@ -116,8 +132,8 @@ async def test_coordinator_syncs_statistics_with_fetched_daily_data(hass):
 
     mock_sync.assert_called_once_with(
         hass,
-        client.get_daily_consumption.return_value,
-        client.get_heating_daily_consumption.return_value,
+        CURRENT_MONTH_DAILY_CONSUMPTION,
+        CURRENT_MONTH_HEATING_CONSUMPTION,
     )
 
 
@@ -195,3 +211,64 @@ async def test_coordinator_has_no_fixed_update_interval(hass):
     coordinator = PoschodochDataUpdateCoordinator(hass, client)
 
     assert coordinator.update_interval is None
+
+
+@pytest.mark.asyncio
+async def test_coordinator_fetches_and_merges_previous_month_water_data(hass, freezer):
+    """poschodoch.sk can take several days to finalize recent consumption
+    figures (confirmed live: late-September days stayed null through the
+    one-time backfill, then were filled in with real values after the
+    calendar had already rolled into October — and since ongoing sync
+    only ever looked at the *current* month, those days were never
+    revisited). Fetching last month too on every poll lets the existing
+    sync logic, which already only imports newer-than-last-synced
+    entries, pick up anything that was null last time but has since
+    finalized."""
+    freezer.move_to("2026-10-05")
+    client = make_fake_client()
+
+    async def get_daily_consumption(year=None, month=None):
+        if year is None:
+            return {"S": [{"date": "2026-10-05", "consumption": 100.0}]}
+        assert (year, month) == (2026, 9)
+        return {"S": [{"date": "2026-09-24", "consumption": 290.0}]}
+
+    client.get_daily_consumption.side_effect = get_daily_consumption
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    dates = [e["date"] for e in coordinator.data["daily_consumption"]["S"]]
+    assert dates == ["2026-09-24", "2026-10-05"]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_fetches_and_merges_previous_month_heating_data(hass, freezer):
+    freezer.move_to("2026-10-05")
+    client = make_fake_client()
+
+    async def get_heating_daily_consumption(year=None, month=None):
+        if year is None:
+            return {"Kuchyňa": [{"date": "2026-10-05", "consumption": 2.0}]}
+        assert (year, month) == (2026, 9)
+        return {"Kuchyňa": [{"date": "2026-09-24", "consumption": 1.5}]}
+
+    client.get_heating_daily_consumption.side_effect = get_heating_daily_consumption
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    dates = [e["date"] for e in coordinator.data["heating_daily_consumption"]["Kuchyňa"]]
+    assert dates == ["2026-09-24", "2026-10-05"]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_requests_previous_month_across_year_boundary(hass, freezer):
+    freezer.move_to("2026-01-15")
+    client = make_fake_client()
+    coordinator = PoschodochDataUpdateCoordinator(hass, client)
+
+    await coordinator.async_refresh()
+
+    client.get_daily_consumption.assert_any_call(2025, 12)
+    client.get_heating_daily_consumption.assert_any_call(2025, 12)

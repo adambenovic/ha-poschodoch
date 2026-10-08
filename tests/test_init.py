@@ -9,7 +9,8 @@ from custom_components.poschodoch.const import DAILY_POLL_HOUR, DOMAIN
 
 
 @pytest.mark.asyncio
-async def test_setup_entry_creates_working_coordinator(hass):
+async def test_setup_entry_creates_working_coordinator(hass, freezer):
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -31,6 +32,14 @@ async def test_setup_entry_creates_working_coordinator(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
@@ -83,10 +92,11 @@ async def test_setup_entry_creates_working_coordinator(hass):
 
 
 @pytest.mark.asyncio
-async def test_setup_entry_schedules_daily_refresh_at_fixed_local_time(hass):
+async def test_setup_entry_schedules_daily_refresh_at_fixed_local_time(hass, freezer):
     """Polling is anchored to a fixed local time (not a plain interval,
     which can't express "once a day at 6am") and the listener must be
     torn down on unload, not leaked."""
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -108,6 +118,14 @@ async def test_setup_entry_schedules_daily_refresh_at_fixed_local_time(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
@@ -167,12 +185,13 @@ async def test_setup_entry_schedules_daily_refresh_at_fixed_local_time(hass):
 
 
 @pytest.mark.asyncio
-async def test_setup_entry_passes_saved_password_login_fields_to_client(hass):
+async def test_setup_entry_passes_saved_password_login_fields_to_client(hass, freezer):
     """Entries set up via email+password must have those fields (plus the
     device-trust cookie) reach the client, since that's what gates the
     self-heal fallback in _refresh(). Existing token-paste entries simply
     don't have these keys at all — entry.data.get(...) returns None for
     them, which is exactly what keeps today's behavior unchanged."""
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -197,6 +216,14 @@ async def test_setup_entry_passes_saved_password_login_fields_to_client(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
@@ -252,9 +279,10 @@ async def test_setup_entry_passes_saved_password_login_fields_to_client(hass):
 
 
 @pytest.mark.asyncio
-async def test_full_setup_creates_real_sensor_entities(hass):
+async def test_full_setup_creates_real_sensor_entities(hass, freezer):
     """End-to-end: no mocking of platform forwarding, exercises the real
     __init__.py -> sensor.py wiring exactly as Home Assistant would."""
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -276,6 +304,14 @@ async def test_full_setup_creates_real_sensor_entities(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
@@ -437,7 +473,8 @@ async def test_token_rotation_persists_new_expiry_timestamps(hass):
 
 
 @pytest.mark.asyncio
-async def test_setup_entry_triggers_statistics_backfill(hass):
+async def test_setup_entry_triggers_statistics_backfill(hass, freezer):
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -459,6 +496,14 @@ async def test_setup_entry_triggers_statistics_backfill(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",
@@ -511,9 +556,10 @@ async def test_setup_entry_triggers_statistics_backfill(hass):
 
 
 @pytest.mark.asyncio
-async def test_setup_entry_survives_statistics_backfill_failure(hass):
+async def test_setup_entry_survives_statistics_backfill_failure(hass, freezer):
     """A backfill failure (e.g. recorder not ready yet) must never prevent
     the integration from loading."""
+    freezer.move_to("2026-09-29")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -535,6 +581,14 @@ async def test_setup_entry_survives_statistics_backfill_failure(hass):
                 {"MenuId": 1, "MenuCode": "account", "MenuName": "..."},
                 {"MenuId": 20, "MenuCode": "RepairFund", "MenuName": "..."},
             ],
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S&year=2026&month=8",
+            payload={"Consumption": []},
+        )
+        mocked.get(
+            "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=U&year=2026&month=8",
+            payload={"Consumption": []},
         )
         mocked.get(
             "https://api.poschodoch.sk/api/Flat/DailyConsumption?menuId=41&type=S",

@@ -1,6 +1,7 @@
 """Data update coordinator for poschodoch.sk."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -16,6 +17,21 @@ _LOGGER = logging.getLogger(__name__)
 CONSUMPTION_TYPES = ("S", "T", "U")
 
 
+def _previous_month(today: datetime) -> tuple[int, int]:
+    return (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+
+
+def _merge_series(
+    older: dict[str, list[dict]], newer: dict[str, list[dict]]
+) -> dict[str, list[dict]]:
+    """Combine two distinct calendar months' per-series entries, oldest
+    first, for every key either side has."""
+    return {
+        key: older.get(key, []) + newer.get(key, [])
+        for key in older.keys() | newer.keys()
+    }
+
+
 class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
     """Fetches all poschodoch.sk data on one schedule."""
 
@@ -29,8 +45,25 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
-            daily_consumption = await self.client.get_daily_consumption()
-            heating_daily_consumption = await self.client.get_heating_daily_consumption()
+            prev_year, prev_month = _previous_month(datetime.now(timezone.utc))
+
+            # poschodoch.sk can take several days to finalize recent
+            # consumption figures (confirmed live: late-September days
+            # stayed null through the one-time backfill, then were filled
+            # in with real values after the calendar had already rolled
+            # into October — and since ongoing sync only ever looked at
+            # the *current* month, those days were never revisited).
+            # Fetching last month too lets the existing sync logic, which
+            # already only imports newer-than-last-synced entries, pick
+            # up anything that was null last time but has since finalized.
+            daily_consumption = _merge_series(
+                await self.client.get_daily_consumption(prev_year, prev_month),
+                await self.client.get_daily_consumption(),
+            )
+            heating_daily_consumption = _merge_series(
+                await self.client.get_heating_daily_consumption(prev_year, prev_month),
+                await self.client.get_heating_daily_consumption(),
+            )
             consumption_status = {
                 type_code: await self.client.get_consumption_status(type_code)
                 for type_code in CONSUMPTION_TYPES
