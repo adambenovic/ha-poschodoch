@@ -175,11 +175,13 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         params = {"menuId": menu_id, "type": type_code, **params}
         body = await self.request("GET", "Flat/DailyConsumption", params=params)
+        _window = [
+            e for e in body["Consumption"] if "2026-09-20" <= e["Date"] <= "2026-10-08"
+        ]
         _LOGGER.warning(
-            "DIAGNOSTIC Flat/DailyConsumption type=%s: %d entries, tail=%s",
+            "DIAGNOSTIC Flat/DailyConsumption type=%s window=%s",
             type_code,
-            len(body["Consumption"]),
-            body["Consumption"][-10:],
+            _window,
         )
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
