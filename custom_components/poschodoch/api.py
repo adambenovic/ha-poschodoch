@@ -175,6 +175,12 @@ class PoschodochApiClient:
         menu_id = menu_map["DailyConsumption"]
         params = {"menuId": menu_id, "type": type_code, **params}
         body = await self.request("GET", "Flat/DailyConsumption", params=params)
+        _LOGGER.debug(
+            "Flat/DailyConsumption type=%s: %d entries, tail=%s",
+            type_code,
+            len(body["Consumption"]),
+            body["Consumption"][-10:],
+        )
         partitioned: dict[str, list[dict]] = {}
         for entry in body["Consumption"]:
             partitioned.setdefault(entry[group_by], []).append(
