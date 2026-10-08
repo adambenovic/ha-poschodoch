@@ -56,8 +56,12 @@ class PoschodochDataUpdateCoordinator(DataUpdateCoordinator):
             # Fetching last month too lets the existing sync logic, which
             # already only imports newer-than-last-synced entries, pick
             # up anything that was null last time but has since finalized.
+            _prev_water = await self.client.get_daily_consumption(prev_year, prev_month)
+            _LOGGER.warning(
+                "DIAGNOSTIC previous-month water (%s-%s): %s", prev_year, prev_month, _prev_water
+            )
             daily_consumption = _merge_series(
-                await self.client.get_daily_consumption(prev_year, prev_month),
+                _prev_water,
                 await self.client.get_daily_consumption(),
             )
             heating_daily_consumption = _merge_series(
